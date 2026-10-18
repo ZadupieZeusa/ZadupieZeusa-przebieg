@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#141414">
+<script>if(navigator.standalone||matchMedia('(display-mode: standalone)').matches)document.documentElement.classList.add('standalone');</script>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Przebieg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23141414'/%3E%3Cpath d='M14 44 L26 28 L34 36 L50 18' stroke='%234ade80' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<title>Przebieg</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0d0d0d;--panel:#141414;--surface:#1e1e1e;--surface2:#272727;--surface3:#313131;
+  --border:#2a2a2a;--border2:#383838;--text:#f0f0f0;--text2:#999;--text3:#5c5c5c;
+  --accent:#4ade80;--gold:#fbbf24;--danger:#ff5555;--warn:#ffaa33;
+  /* kolory danych — sprawdzone pod daltonizm na ciemnym tle */
+  --c-pace:#3b82f6;--c-hr:#e8590c;--c-ele:#9b5de5;
+  --top-gap:0px;
+}
+html{background:#141414}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);overflow:hidden;display:flex;flex-direction:column}
+button{font-family:inherit}
+.num{font-variant-numeric:tabular-nums}
+
+/* ── TOPBAR ── */
+.top-spacer{display:none;flex-shrink:0;height:var(--top-gap);background:#000}
+@media (display-mode: standalone){ :root{--top-gap:calc(env(safe-area-inset-top) + 22px)} .top-spacer{display:block} }
+html.standalone{--top-gap:calc(env(safe-area-inset-top) + 22px)}
+html.standalone .top-spacer{display:block}
+.topbar{display:flex;align-items:center;gap:8px;height:52px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;z-index:50;
+  padding:0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left))}
+.logo{font-size:16px;font-weight:800;letter-spacing:-.5px;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.logo span{color:var(--accent)}
+.logo b{font-weight:800}
+.main-nav{display:flex;gap:2px;background:var(--surface2);border-radius:8px;padding:2px;margin-left:6px}
+.mnav{background:none;border:none;color:var(--text2);font-size:13px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mnav:hover{color:var(--text)}
+.mnav.active{background:var(--surface3);color:var(--text)}
+.tb-spacer{flex:1}
+.tb-btn{background:none;border:1px solid var(--border2);color:var(--text2);font-size:12px;padding:6px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.tb-btn:hover{background:var(--surface2);color:var(--text)}
+.btn-add{background:var(--accent);border:none;color:#0d0d0d;padding:7px 13px;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap}
+.btn-add:hover{opacity:.88}
+.drive-wrap{position:relative}
+.drive-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:5px;min-width:220px;z-index:300;box-shadow:0 8px 32px #0009}
+.drive-menu button{width:100%;text-align:left;background:none;border:none;color:var(--text2);font-size:13px;padding:8px 10px;border-radius:6px;cursor:pointer;display:block}
+.drive-menu button:hover{background:var(--surface2);color:var(--text)}
+.drive-menu hr{border:none;border-top:1px solid var(--border);margin:4px 0}
+
+/* dolna nawigacja na telefonie */
+.bottom-nav{display:none}
+@media (max-width:720px){
+  .main-nav{display:none}
+  .bottom-nav{display:flex;flex-shrink:0;background:var(--panel);border-top:1px solid var(--border);padding:4px 6px calc(4px + env(safe-area-inset-bottom))}
+  .bnav{flex:1;background:none;border:none;color:var(--text3);font-size:11px;font-weight:700;padding:6px 0;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
+  .bnav .ico{font-size:19px;line-height:1}
+  .bnav.active{color:var(--text)}
+  .hide-m{display:none}
+}
+
+/* ── WIDOKI ── */
+main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.view{display:none;max-width:980px;margin:0 auto;padding:16px calc(14px + env(safe-area-inset-right)) 40px calc(14px + env(safe-area-inset-left))}
+.view.active{display:block}
+h2.sec{font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:22px 0 10px}
+h2.sec:first-child{margin-top:4px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.muted{color:var(--text2)}
+.empty{text-align:center;color:var(--text2);padding:40px 16px;font-size:14px;line-height:1.6}
+
+/* kafelki */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media (max-width:720px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 13px}
+.tile .lbl{font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.tile .val{font-size:24px;font-weight:800;margin-top:4px;letter-spacing:-.5px}
+.tile .val small{font-size:13px;font-weight:600;color:var(--text2);margin-left:2px}
+.tile .sub{font-size:12px;color:var(--text2);margin-top:2px}
+
+/* lista treningów */
+.filters{display:flex;gap:6px;margin:16px 0 4px;flex-wrap:wrap}
+.chip{background:var(--surface);border:1px solid var(--border2);color:var(--text2);font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;cursor:pointer}
+.chip.active{background:var(--text);color:#0d0d0d;border-color:var(--text)}
+.month-h{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:700;margin:20px 2px 8px}
+.month-h span{font-size:12px;color:var(--text2);font-weight:600}
+.act{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:6px;cursor:pointer}
+.act:hover{border-color:var(--border2);background:#222}
+.act svg.thumb{width:54px;height:54px;flex-shrink:0;background:var(--surface2);border-radius:9px}
+.act .info{flex:1;min-width:0}
+.act .ttl{font-size:14px;font-weight:700;display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act .when{font-size:12px;color:var(--text2);margin-top:1px}
+.act .stats{display:flex;gap:14px;margin-top:5px;font-size:13px;font-weight:600}
+.act .stats span small{color:var(--text2);font-weight:500;font-size:11px;margin-left:1px}
+.pr-badge{background:#fbbf2422;color:var(--gold);font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;flex-shrink:0}
+.sport-badge{background:var(--surface3);color:var(--text2);font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px}
+
+/* ── SZCZEGÓŁY ── */
+.detail{position:fixed;inset:0;background:var(--bg);z-index:400;display:none;flex-direction:column}
+.detail.open{display:flex}
+.detail-top{display:flex;align-items:center;gap:8px;padding:calc(10px + var(--top-gap)) calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));background:var(--panel);border-bottom:1px solid var(--border)}
+.back{background:var(--surface2);border:none;color:var(--text);font-size:18px;width:36px;height:36px;border-radius:9px;cursor:pointer;flex-shrink:0}
+.detail-title{flex:1;min-width:0}
+.detail-title b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.detail-title span{font-size:12px;color:var(--text2)}
+.detail-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.detail-inner{max-width:980px;margin:0 auto;padding:14px calc(14px + env(safe-area-inset-right)) 50px calc(14px + env(safe-area-inset-left))}
+#map{height:320px;border-radius:12px;border:1px solid var(--border);background:#1a1a1a;z-index:1}
+@media (max-width:720px){#map{height:260px}}
+.big-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:12px}
+@media (max-width:720px){.big-stats{grid-template-columns:repeat(3,1fr)}}
+.big-stats div{background:var(--surface);padding:10px 12px}
+.big-stats .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.big-stats .val{font-size:19px;font-weight:800;margin-top:2px;letter-spacing:-.3px}
+.big-stats .val small{font-size:12px;color:var(--text2);font-weight:600;margin-left:2px}
+.pr-list{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.pr-item{display:flex;align-items:center;gap:10px;background:#fbbf2412;border:1px solid #fbbf2440;border-radius:10px;padding:9px 12px;font-size:13px}
+.pr-item b{color:var(--gold)}
+.effort-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.effort-chips::-webkit-scrollbar{display:none}
+.effort-chip{flex-shrink:0;background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:7px 11px;cursor:pointer;text-align:left;color:var(--text)}
+.effort-chip .l{font-size:11px;color:var(--text2);font-weight:600}
+.effort-chip .v{font-size:15px;font-weight:800;margin-top:1px}
+.effort-chip.pb .v::after{content:' 🏆';font-size:12px}
+.effort-chip.active{border-color:var(--gold);background:#fbbf2418}
+.chart-card{padding:12px 12px 6px;margin-bottom:8px}
+.chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.chart-head b{font-size:13px;display:flex;align-items:center;gap:7px}
+.chart-head b i{width:10px;height:3px;border-radius:2px;display:inline-block}
+.chart-head span{font-size:12px;color:var(--text2)}
+.chart-box{position:relative;height:130px}
+.hover-readout{position:sticky;top:0;z-index:5;background:var(--bg);font-size:12px;color:var(--text2);padding:6px 2px;display:flex;gap:14px;min-height:28px}
+.hover-readout b{color:var(--text)}
+table.splits{width:100%;border-collapse:collapse;font-size:13px}
+table.splits th{white-space:nowrap;font-size:10.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+table.splits td{padding:7px 10px;border-bottom:1px solid var(--border)}
+table.splits tr:last-child td{border-bottom:none}
+table.splits td.r,table.splits th.r{text-align:right}
+.bar-cell{width:42%}
+.sbar{height:8px;border-radius:4px;background:var(--c-pace);opacity:.75}
+tr.fast .sbar{background:var(--gold);opacity:1}
+.detail-actions{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap}
+.btn-ghost{background:var(--surface);border:1px solid var(--border2);color:var(--text2);font-size:13px;padding:8px 12px;border-radius:8px;cursor:pointer}
+.btn-ghost:hover{color:var(--text)}
+.btn-ghost.danger{color:var(--danger)}
+
+/* ── REKORDY ── */
+.form-card{padding:14px}
+.form-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.form-top .vd{font-size:32px;font-weight:800;letter-spacing:-1px}
+.form-top .vd small{font-size:13px;color:var(--text2);font-weight:600;margin-left:4px}
+.predict{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+@media (max-width:520px){.predict{grid-template-columns:repeat(2,1fr)}}
+.predict div{background:var(--surface2);border-radius:9px;padding:9px 10px}
+.predict .l{font-size:11px;color:var(--text2);font-weight:600}
+.predict .v{font-size:17px;font-weight:800;margin-top:2px}
+.predict .p{font-size:11px;color:var(--text2)}
+.rec-row{border-bottom:1px solid var(--border)}
+.rec-row:last-child{border-bottom:none}
+.rec-head{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer}
+.rec-head:hover{background:#222}
+.rec-head .d{width:84px;flex-shrink:0;font-size:13px;font-weight:700}
+.rec-head .t{font-size:17px;font-weight:800;min-width:78px}
+.rec-head .p{font-size:12px;color:var(--text2);flex:1;white-space:nowrap}
+.rec-head .w{font-size:12px;color:var(--text2);text-align:right;white-space:nowrap}
+.rec-head .chev{color:var(--text3);font-size:12px;transition:transform .15s}
+.rec-row.open .chev{transform:rotate(90deg)}
+.rec-row.none .t{color:var(--text3);font-weight:600;font-size:14px}
+.rec-body{display:none;padding:2px 14px 14px}
+.rec-row.open .rec-body{display:block}
+.top-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.top-item{display:flex;gap:10px;font-size:13px;padding:6px 8px;border-radius:7px;cursor:pointer}
+.top-item:hover{background:var(--surface2)}
+.top-item .n{width:20px;color:var(--text3);font-weight:700}
+.top-item .tm{width:72px;font-weight:700}
+.top-item .dt{color:var(--text2);flex:1}
+.other-recs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media (max-width:720px){.other-recs{grid-template-columns:repeat(2,1fr)}}
+.other-recs .tile{cursor:pointer}
+
+/* ── STATYSTYKI ── */
+.heat-wrap{overflow-x:auto;padding:12px 12px 8px}
+.heat-legend{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);justify-content:flex-end;margin-top:6px}
+.heat-legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+table.years{width:100%;border-collapse:collapse;font-size:13px}
+table.years th{font-size:10.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;font-weight:600;text-align:right;padding:9px 12px;border-bottom:1px solid var(--border)}
+table.years th:first-child,table.years td:first-child{text-align:left}
+table.years td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:right}
+table.years tr:last-child td{border-bottom:none}
+table.years tr.sel td{background:var(--surface2)}
+table.years tr.click{cursor:pointer}
+.year-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+
+/* tooltip wykresów / heatmapy */
+.tip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--border2);color:var(--text);font-size:12px;padding:6px 9px;border-radius:8px;z-index:900;display:none;white-space:nowrap}
+
+/* ── MODALE / TOASTY ── */
+.overlay{position:fixed;inset:0;background:#000b;z-index:800;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:20px;width:100%;max-width:440px;max-height:85vh;overflow-y:auto}
+.modal h3{font-size:17px;margin-bottom:8px}
+.modal p{font-size:14px;color:var(--text2);line-height:1.55}
+.modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.progress{height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;margin-top:12px}
+.progress i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+#toast{position:fixed;bottom:calc(80px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border2);color:var(--text);padding:9px 15px;border-radius:10px;font-size:13px;z-index:950;box-shadow:0 6px 24px #0008;display:none;max-width:calc(100% - 24px)}
+#toast.err{border-color:var(--danger)}
+.banner{position:fixed;top:calc(var(--top-gap) + 60px);left:50%;transform:translateX(-50%);z-index:700;background:var(--surface);border:1px solid var(--warn);border-radius:10px;padding:8px 10px 8px 14px;display:flex;align-items:center;gap:10px;font-size:13px;box-shadow:0 6px 24px #0008;max-width:calc(100% - 24px)}
+.btn-sm{background:var(--accent);color:#0d0d0d;border:none;font-weight:800;font-size:12px;padding:6px 11px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.btn-x{background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer;padding:2px 4px}
+
+/* ekran powitalny */
+.welcome{max-width:520px;margin:30px auto;text-align:center}
+.welcome .big{font-size:44px}
+.welcome h1{font-size:24px;margin:10px 0 8px;letter-spacing:-.5px}
+.welcome p{color:var(--text2);font-size:14px;line-height:1.6}
+.welcome .steps{text-align:left;margin:20px 0;display:flex;flex-direction:column;gap:8px}
+.welcome .steps div{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;color:var(--text2)}
+.welcome .steps b{color:var(--text)}
+.welcome .btn-add{padding:11px 20px;font-size:15px;margin-top:6px}
+
+.leaflet-container{background:#1a1a1a;font-family:inherit}
+.leaflet-control-attribution{background:#000a !important;color:#888 !important;font-size:9px !important}
+.leaflet-control-attribution a{color:#aaa !important}
+.leaflet-bar a{background:var(--surface) !important;color:var(--text) !important;border-color:var(--border2) !important}
+.drop-hint{position:fixed;inset:0;background:#4ade8022;border:3px dashed var(--accent);z-index:990;display:none;align-items:center;justify-content:center;font-size:22px;font-weight:800;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="top-spacer"></div>
+<header class="topbar">
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 64 64"><path d="M10 46 L24 28 L34 38 L54 16" stroke="var(--accent)" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <b>Prze<span>bieg</span></b>
+  </div>
+  <nav class="main-nav">
+    <button class="mnav active" data-view="list">Treningi</button>
+    <button class="mnav" data-view="records">Rekordy</button>
+    <button class="mnav" data-view="stats">Statystyki</button>
+  </nav>
+  <div class="tb-spacer"></div>
+  <div class="drive-wrap">
+    <button class="tb-btn" id="drive-btn">☁ Drive</button>
+    <div class="drive-menu" id="drive-menu" style="display:none">
+      <button data-act="sync">🔄 Synchronizuj teraz</button>
+      <button data-act="recompute">♻ Przelicz wszystkie treningi</button>
+      <button data-act="export">⬇ Pobierz bazę (JSON)</button>
+      <button data-act="status">ℹ Status synchronizacji</button>
+      <hr>
+      <button data-act="disconnect" style="color:var(--danger)">✕ Odłącz konto Google</button>
+    </div>
+  </div>
+  <button class="btn-add" id="import-btn">＋ <span class="hide-m">Import </span>FIT</button>
+  <input type="file" id="file-input" accept=".fit,.FIT,.zip,application/zip,application/octet-stream" multiple hidden>
+</header>
+
+<main id="main">
+  <section class="view active" id="view-list"></section>
+  <section class="view" id="view-records"></section>
+  <section class="view" id="view-stats"></section>
+</main>
+
+<nav class="bottom-nav">
+  <button class="bnav active" data-view="list"><span class="ico">🏃</span>Treningi</button>
+  <button class="bnav" data-view="records"><span class="ico">🏆</span>Rekordy</button>
+  <button class="bnav" data-view="stats"><span class="ico">📊</span>Statystyki</button>
+</nav>
+
+<div class="detail" id="detail">
+  <div class="detail-top">
+    <button class="back" id="detail-back" aria-label="Wróć">‹</button>
+    <div class="detail-title" id="detail-title"></div>
+  </div>
+  <div class="detail-body" id="detail-body"><div class="detail-inner" id="detail-inner"></div></div>
+</div>
+
+<div class="tip" id="tip"></div>
+<div id="toast"></div>
+<div class="drop-hint" id="drop-hint">Upuść pliki FIT</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module">
+import * as C from './core.js';
+
+// ══ KONFIGURACJA ════════════════════════════════════════════════════════════
+// Ten sam klient OAuth co FotoPlaner (autoryzowany adres: zadupiezeusa.github.io).
+// Uprawnienie drive.file: aplikacja widzi wyłącznie pliki, które sama utworzyła.
+const CLIENT_ID = '298351769527-fdtj2ij6f6s657ju43i9aka4bipb68cs.apps.googleusercontent.com';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const FOLDER = 'Przebieg', RAW_FOLDER = 'surowe', DB_FILE = 'baza.json';
+const LS = k => 'przebieg_' + k;   // wszystkie klucze z prefiksem — github.io jest wspólne z FotoPlanerem
+const API = 'https://www.googleapis.com/drive/v3';
+const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const MONTHS = ['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień'];
+const MONTHS_SHORT = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+const DAYS = ['niedziela','poniedziałek','wtorek','środa','czwartek','piątek','sobota'];
+const SPORT_PL = { running: 'Bieg', trailRunning: 'Bieg terenowy', treadmillRunning: 'Bieżnia', cycling: 'Rower', walking: 'Spacer', hiking: 'Wędrówka', swimming: 'Pływanie', generic: 'Aktywność' };
+const fmtDate = ts => { const d = new Date(ts); return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+const fmtTime = ts => new Date(ts).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' });
+
+// ══ STAN ════════════════════════════════════════════════════════════════════
+let db = emptyDb();
+let view = 'list', listFilter = 'run';
+let pendingFiles = null;
+function emptyDb() { return { version: 1, activities: [], deleted: [], savedAt: 0 }; }
+const acts = () => db.activities;
+const byId = id => db.activities.find(a => a.id === id);
+
+// ══ INDEXEDDB (lokalny cache) ═══════════════════════════════════════════════
+const idb = (() => {
+  let p;
+  const open = () => p ||= new Promise((res, rej) => {
+    const r = indexedDB.open('przebieg', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('kv'); r.result.createObjectStore('streams'); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  const tx = async (store, mode, fn) => {
+    const d = await open();
+    return new Promise((res, rej) => { const t = d.transaction(store, mode); const q = fn(t.objectStore(store)); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); });
+  };
+  return {
+    get: (s, k) => tx(s, 'readonly', o => o.get(k)).catch(() => undefined),
+    put: (s, k, v) => tx(s, 'readwrite', o => o.put(v, k)).catch(() => {}),
+    del: (s, k) => tx(s, 'readwrite', o => o.delete(k)).catch(() => {}),
+    clear: s => tx(s, 'readwrite', o => o.clear()).catch(() => {}),
+  };
+})();
+async function persistLocal() { await idb.put('kv', 'db', db); }
+
+// ══ TOAST / MODAL ═══════════════════════════════════════════════════════════
+let toastT;
+function toast(msg, err = false, ms = 3200) {
+  const t = $('#toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block';
+  clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', ms);
+}
+function modal(html, { dismiss = true } = {}) {
+  const o = document.createElement('div'); o.className = 'overlay';
+  o.innerHTML = `<div class="modal">${html}</div>`;
+  if (dismiss) o.addEventListener('click', e => { if (e.target === o) o.remove(); });
+  document.body.appendChild(o);
+  o.close = () => o.remove();
+  return o;
+}
+
+// ══ GOOGLE: LOGOWANIE (wzorowane na FotoPlanerze) ═══════════════════════════
+let token = null, tokenExp = 0, tokenClient = null, tokenResolve = null, tokenInFlight = null;
+const googleHint = () => localStorage.getItem(LS('google_email')) || '';
+
+function loadGIS() {
+  return new Promise((res, rej) => {
+    if (window.google?.accounts?.oauth2) { res(); return; }
+    const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client';
+    s.onload = res; s.onerror = rej; document.head.appendChild(s);
+  });
+}
+function initGIS() {
+  if (!window.google?.accounts?.oauth2) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID, scope: SCOPE,
+    ...(googleHint() ? { login_hint: googleHint() } : {}),
+    callback: r => {
+      const done = tokenResolve; tokenResolve = null;
+      if (r.error) { token = null; updateDriveBtn(); done?.(false); return; }
+      token = r.access_token;
+      tokenExp = Date.now() + ((Number(r.expires_in) || 3600) - 120) * 1000;
+      localStorage.setItem(LS('connected'), '1');
+      updateDriveBtn(); showBanner(false);
+      if (!googleHint()) setTimeout(rememberAccount, 0);
+      done?.(true);
+    },
+    error_callback: () => { const done = tokenResolve; tokenResolve = null; done?.(false); },
+  });
+}
+async function rememberAccount() {
+  try { const r = await driveFetch(`${API}/about?fields=user(emailAddress)`); const d = await r.json(); if (d?.user?.emailAddress) localStorage.setItem(LS('google_email'), d.user.emailAddress); } catch (e) {}
+}
+// interactive=true → wolno pokazać okno wyboru konta (tylko z kliknięcia)
+async function ensureToken(interactive = false) {
+  if (token && Date.now() < tokenExp) return true;
+  token = null;
+  if (tokenInFlight) return tokenInFlight;
+  tokenInFlight = (async () => {
+    try {
+      if (location.protocol === 'file:') { toast('Logowanie Google działa tylko przez https (GitHub Pages)', true); return false; }
+      await loadGIS(); if (!tokenClient) initGIS(); if (!tokenClient) return false;
+      return await new Promise(res => {
+        let settled = false;
+        tokenResolve = ok => { if (settled) return; settled = true; res(ok); };
+        setTimeout(() => { if (!settled) { settled = true; tokenResolve = null; res(false); } }, interactive ? 120000 : 10000);
+        try {
+          const hint = googleHint();
+          tokenClient.requestAccessToken(interactive && !hint ? {} : { prompt: '', ...(hint ? { login_hint: hint } : {}) });
+        } catch (e) { if (!settled) { settled = true; tokenResolve = null; res(false); } }
+      });
+    } catch (e) { return false; }
+    finally { setTimeout(() => tokenInFlight = null, 0); }
+  })();
+  return tokenInFlight;
+}
+async function connect() {
+  const ok = await ensureToken(true);
+  if (!ok) { toast('Nie udało się połączyć z Google', true); return false; }
+  toast('✅ Połączono z Google Drive');
+  await sync();
+  if (pendingFiles) { const f = pendingFiles; pendingFiles = null; importFiles(f); }
+  return true;
+}
+async function driveFetch(url, opts = {}, retry = true) {
+  if (!await ensureToken()) throw new Error('Brak połączenia z kontem Google');
+  const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token } });
+  if (r.status === 401) {
+    token = null; tokenExp = 0; updateDriveBtn();
+    if (retry && await ensureToken()) return driveFetch(url, opts, false);
+    throw new Error('Sesja Google wygasła — połącz się ponownie');
+  }
+  if (!r.ok && r.status !== 404) { let m = r.status; try { m = (await r.clone().json()).error?.message || m; } catch (e) {} throw new Error('Drive: ' + m); }
+  return r;
+}
+function disconnect() {
+  if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {});
+  token = null; tokenExp = 0; tokenClient = null;
+  ['connected', 'google_email', 'folder_id', 'raw_id', 'db_id'].forEach(k => localStorage.removeItem(LS(k)));
+  updateDriveBtn(); toast('Odłączono konto Google. Dane w tej przeglądarce zostały.');
+}
+let syncState = 'idle';
+function updateDriveBtn() {
+  const b = $('#drive-btn');
+  const map = { sync: ['☁ …', 'var(--warn)'], err: ['☁ ⚠', 'var(--danger)'] };
+  if (map[syncState]) { b.textContent = map[syncState][0]; b.style.color = map[syncState][1]; b.style.borderColor = map[syncState][1]; return; }
+  b.textContent = token ? '☁ ✓' : '☁ Drive';
+  b.style.color = token ? 'var(--accent)' : ''; b.style.borderColor = token ? '#4ade8066' : '';
+  b.title = token ? 'Połączono z Google Drive' : 'Kliknij, aby połączyć z Google Drive';
+}
+function showBanner(show, msg = 'Nie połączono z Google — dane mogą być nieaktualne') {
+  let b = $('#gbanner');
+  if (!show) { b?.remove(); return; }
+  if (b) return;
+  b = document.createElement('div'); b.id = 'gbanner'; b.className = 'banner';
+  b.innerHTML = `<span>☁ ${esc(msg)}</span><button class="btn-sm">Połącz</button><button class="btn-x" title="Ukryj">✕</button>`;
+  b.querySelector('.btn-sm').onclick = () => { showBanner(false); connect(); };
+  b.querySelector('.btn-x').onclick = () => showBanner(false);
+  document.body.appendChild(b);
+}
+
+// ══ GOOGLE DRIVE: PLIKI ═════════════════════════════════════════════════════
+const q = s => encodeURIComponent(s);
+async function findOrCreateFolder(name, parent, lsKey) {
+  const cached = localStorage.getItem(LS(lsKey));
+  if (cached) {
+    const r = await driveFetch(`${API}/files/${cached}?fields=id,trashed`);
+    if (r.ok) { const d = await r.json(); if (!d.trashed) return cached; }
+  }
+  const query = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parent}' in parents`;
+  const r = await driveFetch(`${API}/files?q=${q(query)}&fields=files(id)&orderBy=createdTime`);
+  let id = (await r.json()).files?.[0]?.id;
+  if (!id) {
+    const c = await driveFetch(`${API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parent] }) });
+    id = (await c.json()).id;
+  }
+  localStorage.setItem(LS(lsKey), id);
+  return id;
+}
+let folders = null;
+async function ensureFolders() {
+  if (folders) return folders;
+  const root = await findOrCreateFolder(FOLDER, 'root', 'folder_id');
+  const raw = await findOrCreateFolder(RAW_FOLDER, root, 'raw_id');
+  return folders = { root, raw };
+}
+function multipart(meta, data, type) {
+  const b = 'przebieg' + Math.random().toString(36).slice(2);
+  const body = new Blob([
+    `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n`,
+    data, `\r\n--${b}--`]);
+  return { body, headers: { 'Content-Type': 'multipart/related; boundary=' + b } };
+}
+async function findDbFile() {
+  const { root } = await ensureFolders();
+  const cached = localStorage.getItem(LS('db_id'));
+  if (cached) {
+    const r = await driveFetch(`${API}/files/${cached}?fields=id,trashed,modifiedTime`);
+    if (r.ok) { const d = await r.json(); if (!d.trashed) return d; }
+  }
+  const r = await driveFetch(`${API}/files?q=${q(`name='${DB_FILE}' and trashed=false and '${root}' in parents`)}&fields=files(id,modifiedTime)&orderBy=modifiedTime desc`);
+  const f = (await r.json()).files?.[0] || null;
+  if (f) localStorage.setItem(LS('db_id'), f.id); else localStorage.removeItem(LS('db_id'));
+  return f;
+}
+async function downloadDb() {
+  const f = await findDbFile(); if (!f) return null;
+  const r = await driveFetch(`${API}/files/${f.id}?alt=media`);
+  if (!r.ok) return null;
+  return r.json();
+}
+async function uploadDb(data) {
+  const { root } = await ensureFolders();
+  const f = await findDbFile();
+  const content = JSON.stringify(data);
+  const { body, headers } = multipart(f ? { name: DB_FILE } : { name: DB_FILE, parents: [root], mimeType: 'application/json' }, content, 'application/json');
+  const r = await driveFetch(f ? `${UPLOAD}/files/${f.id}?uploadType=multipart&fields=id` : `${UPLOAD}/files?uploadType=multipart&fields=id`, { method: f ? 'PATCH' : 'POST', headers, body });
+  const j = await r.json(); if (!j.id) throw new Error('Nie zapisano bazy na Drive');
+  localStorage.setItem(LS('db_id'), j.id);
+}
+async function uploadRaw(name, buf, id) {
+  const { raw } = await ensureFolders();
+  const { body, headers } = multipart({ name, parents: [raw], mimeType: 'application/octet-stream', appProperties: { przebiegId: id } }, buf, 'application/octet-stream');
+  const r = await driveFetch(`${UPLOAD}/files?uploadType=multipart&fields=id`, { method: 'POST', headers, body });
+  const j = await r.json(); if (!j.id) throw new Error('Nie zapisano pliku ' + name);
+  return j.id;
+}
+async function downloadRaw(fileId) {
+  const r = await driveFetch(`${API}/files/${fileId}?alt=media`);
+  if (!r.ok) throw new Error('Nie znaleziono pliku źródłowego na Drive');
+  return r.arrayBuffer();
+}
+async function trashFile(fileId) {
+  try { await driveFetch(`${API}/files/${fileId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); } catch (e) {}
+}
+
+// ══ SYNCHRONIZACJA ══════════════════════════════════════════════════════════
+// Scalanie: suma treningów po id, nowsza wersja wygrywa (pole updated), usunięte nie wracają.
+function mergeDb(a, b) {
+  const deleted = new Set([...(a.deleted || []), ...(b.deleted || [])]);
+  const m = new Map();
+  for (const x of [...(a.activities || []), ...(b.activities || [])]) {
+    if (deleted.has(x.id)) continue;
+    const cur = m.get(x.id);
+    if (!cur || (x.updated || 0) > (cur.updated || 0)) m.set(x.id, x);
+  }
+  return { version: 1, activities: [...m.values()].sort((x, y) => y.start - x.start), deleted: [...deleted], savedAt: Math.max(a.savedAt || 0, b.savedAt || 0) };
+}
+const sig = d => JSON.stringify([(d.activities || []).map(a => a.id + ':' + (a.updated || 0)).sort(), [...(d.deleted || [])].sort()]);
+let syncing = null;
+async function sync({ quiet = true } = {}) {
+  if (syncing) return syncing;
+  syncing = (async () => {
+    if (!await ensureToken()) { if (localStorage.getItem(LS('connected'))) showBanner(true); return false; }
+    syncState = 'sync'; updateDriveBtn();
+    try {
+      const before = sig(db);
+      const remote = await downloadDb();
+      if (remote) db = mergeDb(db, remote);
+      if (!remote || sig(db) !== sig(remote)) {
+        db.savedAt = Date.now();
+        await uploadDb(db);
+      }
+      localStorage.setItem(LS('last_sync'), String(Date.now()));
+      await persistLocal();
+      syncState = 'idle'; updateDriveBtn();
+      if (sig(db) !== before) renderAll();
+      if (!quiet) toast('☁ Zsynchronizowano');
+      maybeOfferRecompute();
+      return true;
+    } catch (e) {
+      syncState = 'err'; updateDriveBtn();
+      toast('Błąd synchronizacji: ' + e.message, true, 5000);
+      return false;
+    }
+  })().finally(() => setTimeout(() => syncing = null, 0));
+  return syncing;
+}
+
+// ══ IMPORT ══════════════════════════════════════════════════════════════════
+let vendor;
+const getVendor = async () => vendor ||= await import('./vendor.js');
+
+async function expandFiles(fileList) {
+  const V = await getVendor();
+  const out = [];
+  const fromZip = (u8, depth) => {
+    const files = V.unzipSync(u8, { filter: f => /\.(fit|zip)$/i.test(f.name) });
+    for (const [name, data] of Object.entries(files)) {
+      if (/\.zip$/i.test(name)) { if (depth < 3) fromZip(data, depth + 1); }
+      else out.push({ name: name.split('/').pop(), buf: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) });
+    }
+  };
+  for (const f of fileList) {
+    const buf = await f.arrayBuffer();
+    if (/\.zip$/i.test(f.name)) { try { fromZip(new Uint8Array(buf), 0); } catch (e) { toast('Nie udało się rozpakować ' + f.name, true); } }
+    else out.push({ name: f.name, buf });
+  }
+  return out;
+}
+
+async function importFiles(fileList) {
+  if (!fileList?.length) return;
+  if (!token && !await ensureToken()) {
+    pendingFiles = fileList;
+    showBanner(true, 'Połącz z Google, żeby zapisać treningi na Dysku');
+    return;
+  }
+  const m = modal(`<h3>Import treningów</h3><p id="imp-msg">Przygotowuję pliki…</p><div class="progress"><i id="imp-bar"></i></div>`, { dismiss: false });
+  const setMsg = (t, p) => { m.querySelector('#imp-msg').textContent = t; if (p != null) m.querySelector('#imp-bar').style.width = (p * 100) + '%'; };
+  let items;
+  try { items = await expandFiles(fileList); } catch (e) { m.close(); toast('Błąd: ' + e.message, true); return; }
+  items = items.filter(x => /\.fit$/i.test(x.name));
+  if (!items.length) { m.close(); toast('Nie znaleziono plików .fit', true); return; }
+  const V = await getVendor();
+  const added = [], dup = [], bad = [];
+  const deleted = new Set(db.deleted);
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    setMsg(`${i + 1} / ${items.length}: ${it.name}`, i / items.length);
+    try {
+      const parsed = C.parseFit(it.buf, V);
+      const { summary, streams } = C.buildActivity(parsed);
+      if (byId(summary.id)) { dup.push(it.name); continue; }
+      if (deleted.has(summary.id)) db.deleted = db.deleted.filter(x => x !== summary.id);
+      const d = new Date(summary.start);
+      const pad = n => String(n).padStart(2, '0');
+      const rawName = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}_${summary.sport}.fit`;
+      summary.fileId = await uploadRaw(rawName, it.buf, summary.id);
+      summary.fileName = it.name;
+      summary.updated = Date.now();
+      db.activities.push(summary);
+      await idb.put('streams', summary.id, streams);
+      added.push(summary);
+    } catch (e) { bad.push(`${it.name}: ${e.message}`); }
+  }
+  db.activities.sort((a, b) => b.start - a.start);
+  setMsg('Zapisuję bazę na Drive…', 1);
+  await persistLocal();
+  await sync();
+  m.close();
+  renderAll();
+  showImportResult(added, dup, bad);
+}
+
+function showImportResult(added, dup, bad) {
+  let html = `<h3>${added.length ? '✅ Zaimportowano ' + added.length + ' ' + plural(added.length, 'trening', 'treningi', 'treningów') : 'Brak nowych treningów'}</h3>`;
+  // rekordy pokazujemy przy małym imporcie (przy wgraniu całej historii byłoby ich setki)
+  if (added.length && added.length <= 5) {
+    const recs = added.flatMap(a => C.newRecordsFor(a, acts()).map(r => ({ ...r, a })));
+    if (recs.length) html += `<div class="pr-list">${recs.map(r => prItemHtml(r)).join('')}</div>`;
+  } else if (added.length > 5) html += `<p>Aktualne rekordy znajdziesz w zakładce <b>Rekordy</b>.</p>`;
+  if (dup.length) html += `<p style="margin-top:10px">Pominięto ${dup.length} — już są w bazie.</p>`;
+  if (bad.length) html += `<p style="margin-top:10px;color:var(--danger)">Błędy (${bad.length}):<br>${bad.slice(0, 5).map(esc).join('<br>')}</p>`;
+  html += `<div class="actions">${added.length === 1 ? `<button class="btn-ghost" id="open-new">Pokaż trening</button>` : ''}<button class="btn-sm" id="ok-imp">OK</button></div>`;
+  const m = modal(html);
+  m.querySelector('#ok-imp').onclick = m.close;
+  const o = m.querySelector('#open-new'); if (o) o.onclick = () => { m.close(); openDetail(added[0].id); };
+}
+function prItemHtml(r) {
+  if (r.m === 'longest') return `<div class="pr-item">🏆 <span><b>Najdłuższy bieg:</b> ${C.fmtKm(r.distance)} km <span class="muted">(było ${C.fmtKm(r.prevDistance)} km)</span></span></div>`;
+  const diff = r.prev ? ` <span class="muted">(−${C.fmtDur(r.prev - r.time)})</span>` : ' <span class="muted">(pierwszy wynik)</span>';
+  return `<div class="pr-item">🏆 <span><b>${esc(r.label)}:</b> ${C.fmtDur(r.time)}${diff}</span></div>`;
+}
+const plural = (n, a, b, c) => n === 1 ? a : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? b : c;
+
+// Pobranie strumieni do wykresów — z cache, a gdy go brak (inne urządzenie): z oryginalnego pliku na Drive
+async function getStreams(a) {
+  let s = await idb.get('streams', a.id);
+  if (s && s.engine === C.ENGINE_VERSION) return s;
+  if (!a.fileId) return null;
+  const buf = await downloadRaw(a.fileId);
+  const V = await getVendor();
+  s = C.buildActivity(C.parseFit(buf, V)).streams;
+  await idb.put('streams', a.id, s);
+  return s;
+}
+
+// Przeliczenie całej bazy z oryginałów (po zmianie algorytmów)
+async function recomputeAll() {
+  if (!await ensureToken(true)) { toast('Najpierw połącz się z Google', true); return; }
+  const list = acts().filter(a => a.fileId);
+  const m = modal(`<h3>Przeliczanie treningów</h3><p id="rc-msg"></p><div class="progress"><i id="rc-bar"></i></div>`, { dismiss: false });
+  const V = await getVendor();
+  let ok = 0, fail = 0;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    m.querySelector('#rc-msg').textContent = `${i + 1} / ${list.length}`;
+    m.querySelector('#rc-bar').style.width = (i / list.length * 100) + '%';
+    try {
+      const { summary, streams } = C.buildActivity(C.parseFit(await downloadRaw(a.fileId), V));
+      Object.assign(a, summary, { id: a.id, fileId: a.fileId, fileName: a.fileName, title: a.title, updated: Date.now() });
+      await idb.put('streams', a.id, streams); ok++;
+    } catch (e) { fail++; }
+  }
+  await persistLocal(); await sync(); m.close(); renderAll();
+  toast(`♻ Przeliczono ${ok}${fail ? ', błędy: ' + fail : ''}`);
+}
+let recomputeOffered = false;
+function maybeOfferRecompute() {
+  if (recomputeOffered) return;
+  const old = acts().filter(a => (a.engine || 0) < C.ENGINE_VERSION).length;
+  if (!old) return;
+  recomputeOffered = true;
+  const m = modal(`<h3>Nowa wersja obliczeń</h3><p>${old} ${plural(old, 'trening był liczony', 'treningi były liczone', 'treningów było liczonych')} starszą wersją aplikacji. Przeliczyć je z oryginalnych plików FIT?</p><div class="actions"><button class="btn-ghost" id="rc-no">Później</button><button class="btn-sm" id="rc-yes">Przelicz</button></div>`);
+  m.querySelector('#rc-no').onclick = m.close;
+  m.querySelector('#rc-yes').onclick = () => { m.close(); recomputeAll(); };
+}
+
+// ══ WSPÓLNE ELEMENTY WIDOKÓW ════════════════════════════════════════════════
+function activityTitle(a) {
+  if (a.title) return a.title;
+  const h = new Date(a.start).getHours();
+  const pora = h < 5 ? 'nocny' : h < 11 ? 'poranny' : h < 17 ? 'popołudniowy' : h < 22 ? 'wieczorny' : 'nocny';
+  if (C.isRun(a)) return `Bieg ${pora}`;
+  return SPORT_PL[a.sport] || a.sport;
+}
+const speedOrPace = a => C.isRun(a) ? { v: C.fmtPace(a.pace), u: '/km' } : { v: a.timer ? (a.distance / a.timer * 3.6).toFixed(1).replace('.', ',') : '–', u: 'km/h' };
+
+function routeThumb(route, size = 54) {
+  if (!route || route.length < 2) return `<svg class="thumb" viewBox="0 0 54 54"><text x="27" y="33" text-anchor="middle" font-size="18" fill="#555">🏃</text></svg>`;
+  const lat0 = route[0][0] * Math.PI / 180, k = Math.cos(lat0);
+  const xs = route.map(p => p[1] * k), ys = route.map(p => -p[0]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const span = Math.max(maxX - minX, maxY - minY) || 1, pad = 7, sc = (size - 2 * pad) / span;
+  const ox = pad + ((size - 2 * pad) - (maxX - minX) * sc) / 2, oy = pad + ((size - 2 * pad) - (maxY - minY) * sc) / 2;
+  const d = xs.map((x, i) => `${i ? 'L' : 'M'}${(ox + (x - minX) * sc).toFixed(1)},${(oy + (ys[i] - minY) * sc).toFixed(1)}`).join('');
+  return `<svg class="thumb" viewBox="0 0 ${size} ${size}"><path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+// Mapa: które treningi w chwili wykonania pobiły rekord (do odznak na liście)
+function prMarks() {
+  const marks = new Map();
+  for (const { m, label } of C.BEST_DISTANCES) {
+    for (const p of C.recordProgression(acts(), m)) {
+      if (!marks.has(p.id)) marks.set(p.id, []);
+      marks.get(p.id).push(label);
+    }
+  }
+  return marks;
+}
+
+// ══ WIDOK: TRENINGI ═════════════════════════════════════════════════════════
+function renderList() {
+  const el = $('#view-list');
+  if (!acts().length) { el.innerHTML = welcomeHtml(); bindWelcome(el); return; }
+  const now = Date.now();
+  const runs = acts().filter(C.isRun);
+  const ws = C.weekStart(now);
+  const ms = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
+  const ys = new Date(new Date(now).getFullYear(), 0, 1).getTime();
+  const sum = from => runs.filter(a => a.start >= from).reduce((s, a) => ({ km: s.km + a.distance / 1000, n: s.n + 1 }), { km: 0, n: 0 });
+  const w = sum(ws), mo = sum(ms), y = sum(ys);
+  const streak = C.weekStreak(acts(), now);
+  const fmtK = v => v.toFixed(1).replace('.', ',');
+  let html = `<div class="tiles">
+    <div class="tile"><div class="lbl">Ten tydzień</div><div class="val num">${fmtK(w.km)}<small>km</small></div><div class="sub">${w.n} ${plural(w.n, 'bieg', 'biegi', 'biegów')}</div></div>
+    <div class="tile"><div class="lbl">${MONTHS[new Date(now).getMonth()]}</div><div class="val num">${fmtK(mo.km)}<small>km</small></div><div class="sub">${mo.n} ${plural(mo.n, 'bieg', 'biegi', 'biegów')}</div></div>
+    <div class="tile"><div class="lbl">Rok ${new Date(now).getFullYear()}</div><div class="val num">${Math.round(y.km)}<small>km</small></div><div class="sub">${y.n} ${plural(y.n, 'bieg', 'biegi', 'biegów')}</div></div>
+    <div class="tile"><div class="lbl">Seria</div><div class="val num">${streak}<small>${plural(streak, 'tydzień', 'tygodnie', 'tygodni')}</small></div><div class="sub">z co najmniej 1 biegiem</div></div>
+  </div>`;
+  const others = acts().length - runs.length;
+  html += `<div class="filters"><button class="chip ${listFilter === 'run' ? 'active' : ''}" data-f="run">Biegi (${runs.length})</button>${others ? `<button class="chip ${listFilter === 'all' ? 'active' : ''}" data-f="all">Wszystko (${acts().length})</button>` : ''}</div>`;
+  const list = listFilter === 'run' ? runs : acts();
+  const marks = prMarks();
+  let curM = null;
+  for (const a of list) {
+    const d = new Date(a.start), key = d.getFullYear() * 12 + d.getMonth();
+    if (key !== curM) {
+      curM = key;
+      const inM = list.filter(x => { const xd = new Date(x.start); return xd.getFullYear() * 12 + xd.getMonth() === key; });
+      const km = inM.reduce((s, x) => s + x.distance, 0);
+      html += `<div class="month-h">${MONTHS[d.getMonth()]} ${d.getFullYear()}<span class="num">${C.fmtKm(km, 1)} km · ${inM.length}×</span></div>`;
+    }
+    const sp = speedOrPace(a), pr = marks.get(a.id);
+    html += `<div class="act" data-id="${a.id}">
+      ${routeThumb(a.route)}
+      <div class="info">
+        <div class="ttl">${esc(activityTitle(a))}${C.isRun(a) ? '' : `<span class="sport-badge">${esc(SPORT_PL[a.sport] || a.sport)}</span>`}${pr ? `<span class="pr-badge" title="${esc(pr.join(', '))}">🏆 ${pr.length > 1 ? pr.length + ' PB' : esc(pr[0])}</span>` : ''}</div>
+        <div class="when">${DAYS[d.getDay()]}, ${fmtDate(a.start)} · ${fmtTime(a.start)}</div>
+        <div class="stats num"><span>${C.fmtKm(a.distance)}<small>km</small></span><span>${C.fmtDur(a.timer)}</span><span>${sp.v}<small>${sp.u}</small></span>${a.avgHr ? `<span class="hide-m">${a.avgHr}<small>bpm</small></span>` : ''}</div>
+      </div></div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('.chip').forEach(c => c.onclick = () => { listFilter = c.dataset.f; renderList(); });
+  el.querySelectorAll('.act').forEach(c => c.onclick = () => openDetail(c.dataset.id));
+}
+
+function welcomeHtml() {
+  const connected = !!token;
+  return `<div class="welcome">
+    <div class="big">🏃</div>
+    <h1>Twój dziennik biegowy</h1>
+    <p>Wgrywasz pliki FIT z zegarka, a Przebieg liczy rekordy, międzyczasy, formę i postępy. Oryginały i baza lądują w folderze <b>„Przebieg”</b> na Twoim Dysku Google.</p>
+    <div class="steps">
+      <div><b>1. Połącz z Google</b> — aplikacja dostaje dostęp tylko do plików, które sama utworzy.</div>
+      <div><b>2. Pobierz FIT z zegarka.</b> Garmin Connect (w przeglądarce): trening → ⚙ → <i>Eksportuj oryginał</i>. Dostaniesz ZIP — wgraj go tak, jak jest. Cała historia: eksport danych konta Garmin też zadziała.</div>
+      <div><b>3. Kliknij „＋ FIT”</b> albo przeciągnij pliki na okno.</div>
+    </div>
+    ${connected ? `<button class="btn-add" data-w="import">＋ Wgraj pierwsze treningi</button>` : `<button class="btn-add" data-w="connect">Połącz z Google Drive</button>`}
+  </div>`;
+}
+function bindWelcome(el) {
+  el.querySelector('[data-w="connect"]')?.addEventListener('click', connect);
+  el.querySelector('[data-w="import"]')?.addEventListener('click', () => $('#file-input').click());
+}
+
+// ══ WIDOK: SZCZEGÓŁY TRENINGU ═══════════════════════════════════════════════
+let map = null, mapLayers = [], hoverMarker = null, detailCharts = [], cur = null, curStreams = null, hl = null;
+const PACE_RAMP = ['#264b8f', '#2f62b5', '#3b82f6', '#60a5fa', '#93c5fd', '#dbeafe']; // wolno → szybko
+
+function closeDetail(keepHash = false) {
+  $('#detail').classList.remove('open');
+  detailCharts.forEach(c => c.destroy()); detailCharts = [];
+  if (map) { map.remove(); map = null; }
+  cur = null; curStreams = null; hl = null;
+  if (!keepHash && location.hash.startsWith('#t=')) history.replaceState(null, '', location.pathname);
+}
+async function openDetail(id) {
+  const a = byId(id); if (!a) return;
+  closeDetail(true);
+  cur = a;
+  if (!location.hash.startsWith('#t=')) history.pushState({ d: id }, '', '#t=' + id);
+  $('#detail').classList.add('open');
+  const d = new Date(a.start);
+  $('#detail-title').innerHTML = `<b>${esc(activityTitle(a))}</b><span>${DAYS[d.getDay()]}, ${fmtDate(a.start)} · ${fmtTime(a.start)}${a.device ? ' · ' + esc(a.device) : ''}</span>`;
+  $('#detail-body').scrollTop = 0;
+  const run = C.isRun(a), sp = speedOrPace(a);
+  const recs = C.newRecordsFor(a, acts());
+  const allTime = C.recordTables(acts(), 1);
+  const stats = [
+    ['Dystans', C.fmtKm(a.distance), 'km'], ['Czas', C.fmtDur(a.timer), ''], [run ? 'Tempo' : 'Prędkość', sp.v, sp.u],
+    ['Przewyższenie', a.ascent ?? '–', 'm'], ['Tętno śr.', a.avgHr ?? '–', a.avgHr ? 'bpm' : ''], ['Tętno maks.', a.maxHr ?? '–', a.maxHr ? 'bpm' : ''],
+    ['Kadencja', a.cadence ?? '–', a.cadence ? (run ? 'kr/min' : 'obr/min') : ''], ['Czas całk.', C.fmtDur(a.elapsed), ''],
+  ];
+  if (a.calories) stats.push(['Kalorie', a.calories, 'kcal']);
+  let html = `${a.hasGps ? '<div id="map"></div>' : ''}
+    <div class="big-stats">${stats.map(([l, v, u]) => `<div><div class="lbl">${l}</div><div class="val num">${v}<small>${u}</small></div></div>`).join('')}</div>`;
+  if (recs.length) html += `<div class="pr-list">${recs.map(prItemHtml).join('')}</div>`;
+  const effs = C.BEST_DISTANCES.filter(x => a.bests?.[x.m]);
+  if (effs.length) {
+    html += `<h2 class="sec">Najlepsze odcinki w tym biegu</h2><div class="effort-chips">${effs.map(x => {
+      const isPb = allTime[x.m]?.[0]?.id === a.id;
+      return `<button class="effort-chip ${isPb ? 'pb' : ''}" data-m="${x.m}"><div class="l">${x.label}</div><div class="v num">${C.fmtDur(a.bests[x.m])}</div></button>`;
+    }).join('')}</div>`;
+  }
+  html += `<h2 class="sec">Wykresy</h2><div class="hover-readout num" id="readout"><span class="muted">Dotknij wykresu, żeby zobaczyć szczegóły</span></div><div id="charts"><div class="card empty" id="charts-loading">Wczytuję dane…</div></div>`;
+  html += `<h2 class="sec">Międzyczasy</h2>${splitsHtml(a)}`;
+  html += `<div class="detail-actions"><button class="btn-ghost" id="d-rename">✎ Zmień nazwę</button><button class="btn-ghost danger" id="d-del">🗑 Usuń trening</button></div>`;
+  $('#detail-inner').innerHTML = html;
+  $('#d-rename').onclick = () => renameActivity(a);
+  $('#d-del').onclick = () => deleteActivity(a);
+  document.querySelectorAll('.effort-chip').forEach(b => b.onclick = () => toggleEffort(b));
+
+  try {
+    const s = await getStreams(a);
+    if (cur !== a) return;
+    curStreams = s;
+    if (!s) { $('#charts').innerHTML = `<div class="card empty">Brak danych szczegółowych.</div>`; return; }
+    if (a.hasGps) drawMap(s);
+    drawCharts(s, run);
+  } catch (e) {
+    if (cur !== a) return;
+    $('#charts').innerHTML = `<div class="card empty">Nie udało się wczytać danych: ${esc(e.message)}<br><button class="btn-sm" style="margin-top:10px" id="retry-s">Połącz i spróbuj ponownie</button></div>`;
+    $('#retry-s').onclick = async () => { if (await ensureToken(true)) openDetail(a.id); };
+  }
+}
+
+function splitsHtml(a) {
+  const sp = a.splits || [];
+  if (!sp.length) return '<div class="card empty">Brak międzyczasów</div>';
+  const full = sp.filter(s => s.dist >= 900);
+  const fastest = full.length ? Math.min(...full.map(s => s.pace)) : null;
+  const paces = sp.map(s => s.pace).filter(Boolean);
+  const maxSpeed = Math.max(...paces.map(p => 1000 / p)), minSpeed = Math.min(...paces.map(p => 1000 / p));
+  const run = C.isRun(a);
+  return `<div class="card"><table class="splits num"><thead><tr><th>km</th><th>${run ? 'Tempo' : 'km/h'}</th><th class="bar-cell"></th><th class="r">Tętno</th><th class="r">↑ / ↓</th></tr></thead><tbody>${sp.map(s => {
+    const v = 1000 / s.pace, w = maxSpeed > minSpeed ? 35 + 65 * (v - minSpeed) / (maxSpeed - minSpeed) : 100;
+    const lbl = s.dist < 990 ? (s.dist / 1000).toFixed(2).replace('.', ',') : s.n;
+    return `<tr class="${s.pace === fastest ? 'fast' : ''}"><td>${lbl}</td><td><b>${run ? C.fmtPace(s.pace) : (v * 3.6).toFixed(1).replace('.', ',')}</b></td><td class="bar-cell"><div class="sbar" style="width:${w}%"></div></td><td class="r">${s.hr ?? '–'}</td><td class="r muted">${s.up}/${s.down}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function drawMap(s) {
+  const pts = s.lat.map((la, i) => la != null && s.lon[i] != null ? [la, s.lon[i]] : null);
+  const valid = pts.filter(Boolean);
+  if (valid.length < 2 || !window.L) return;
+  map = L.map('map', { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  }).addTo(map);
+  // trasa kolorowana tempem: kwantyle tempa tego biegu → 6 odcieni niebieskiego (jasny = szybko)
+  const pv = s.pace.filter(p => p != null && p < 1200).sort((a, b) => a - b);
+  const qn = f => pv[Math.floor(f * (pv.length - 1))];
+  const lo = qn(0.05), hi = qn(0.95);
+  const bucket = p => p == null ? 0 : Math.max(0, Math.min(5, Math.round((hi - p) / ((hi - lo) || 1) * 5)));
+  let seg = [], b = null;
+  const flush = () => { if (seg.length > 1) mapLayers.push(L.polyline(seg, { color: PACE_RAMP[b], weight: 4, opacity: .95, lineCap: 'round', lineJoin: 'round' }).addTo(map)); };
+  for (let i = 0; i < pts.length; i++) {
+    if (!pts[i]) continue;
+    const nb = C.isRun(cur) ? bucket(s.pace[i]) : 3;
+    if (nb !== b && seg.length) { seg.push(pts[i]); flush(); seg = [seg[seg.length - 1]]; }
+    b = nb; seg.push(pts[i]);
+  }
+  flush();
+  const dot = (p, c) => L.circleMarker(p, { radius: 6, color: '#141414', weight: 2, fillColor: c, fillOpacity: 1 }).addTo(map);
+  dot(valid[0], '#4ade80'); dot(valid[valid.length - 1], '#ff5555');
+  hoverMarker = L.circleMarker(valid[0], { radius: 7, color: '#fff', weight: 3, fillColor: '#3b82f6', opacity: 0, fillOpacity: 0 }).addTo(map);
+  map.fitBounds(L.latLngBounds(valid), { padding: [18, 18] });
+  setTimeout(() => map?.invalidateSize(), 50);
+}
+
+// Wtyczki Chart.js: wspólny krzyżyk na wszystkich wykresach + podświetlony odcinek
+let hoverIdx = null;
+const crosshair = {
+  id: 'crosshair',
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea: a, scales: { x } } = chart;
+    if (hl) {
+      const x0 = x.getPixelForValue(hl[0]), x1 = x.getPixelForValue(hl[1]);
+      ctx.save(); ctx.fillStyle = '#fbbf241f'; ctx.fillRect(x0, a.top, x1 - x0, a.bottom - a.top);
+      ctx.strokeStyle = '#fbbf2499'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, a.top); ctx.lineTo(x0, a.bottom); ctx.moveTo(x1, a.top); ctx.lineTo(x1, a.bottom); ctx.stroke(); ctx.restore();
+    }
+    if (hoverIdx == null || !curStreams) return;
+    const px = x.getPixelForValue(curStreams.d[hoverIdx] / 1000);
+    ctx.save(); ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
+    const ds = chart.data.datasets[0], pt = ds.data[hoverIdx];
+    if (pt && pt.y != null) { const py = chart.scales.y.getPixelForValue(pt.y); ctx.fillStyle = ds.borderColor; ctx.strokeStyle = '#141414'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, py, 4.5, 0, 7); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+  },
+};
+
+function drawCharts(s, run) {
+  const host = $('#charts'); host.innerHTML = '';
+  const km = s.d.map(v => v / 1000);
+  const defs = [];
+  if (run && s.pace.some(v => v != null)) {
+    const pv = s.pace.filter(p => p != null && p < 1200).sort((a, b) => a - b);
+    defs.push({ key: 'pace', title: 'Tempo', color: 'var(--c-pace)', hex: '#3b82f6', data: s.pace.map(p => p != null && p < 1500 ? p : null), reverse: true,
+      ...(() => { const lo = Math.max(120, pv[Math.floor(pv.length * 0.01)] - 15), hi = Math.min(1200, pv[Math.floor(pv.length * 0.99)] + 20), st = [15, 30, 60, 120, 300].find(x => (hi - lo) / x <= 4) || 300; return { min: Math.floor(lo / st) * st, max: Math.ceil(hi / st) * st }; })(),
+      fmt: v => C.fmtPace(v), unit: '/km', head: `śr. ${C.fmtPace(cur.pace)} /km` });
+  } else if (!run && s.pace.some(v => v != null)) {
+    defs.push({ key: 'speed', title: 'Prędkość', color: 'var(--c-pace)', hex: '#3b82f6', data: s.pace.map(p => p ? 3600 / p : null), fmt: v => v.toFixed(1).replace('.', ','), unit: 'km/h', head: '' });
+  }
+  if (s.hr.some(v => v != null)) defs.push({ key: 'hr', title: 'Tętno', color: 'var(--c-hr)', hex: '#e8590c', data: s.hr, fmt: v => Math.round(v), unit: 'bpm', head: cur.avgHr ? `śr. ${cur.avgHr} · maks. ${cur.maxHr} bpm` : '' });
+  if (s.ele.some(v => v != null)) defs.push({ key: 'ele', title: 'Wysokość', color: 'var(--c-ele)', hex: '#9b5de5', data: s.ele, fill: true, fmt: v => Math.round(v), unit: 'm n.p.m.', head: `↑ ${cur.ascent} m · ↓ ${cur.descent} m` });
+  if (!defs.length) { host.innerHTML = `<div class="card empty">Brak danych do wykresów.</div>`; return; }
+  const maxKm = km[km.length - 1];
+  for (const def of defs) {
+    const card = document.createElement('div'); card.className = 'card chart-card';
+    card.innerHTML = `<div class="chart-head"><b><i style="background:${def.color}"></i>${def.title}</b><span class="num">${def.head}</span></div><div class="chart-box"><canvas></canvas></div>`;
+    host.appendChild(card);
+    const ch = new Chart(card.querySelector('canvas'), {
+      type: 'line',
+      data: { datasets: [{ data: km.map((x, i) => ({ x, y: def.data[i] })), borderColor: def.hex, borderWidth: 2, pointRadius: 0, tension: .15, spanGaps: true,
+        fill: def.fill ? 'start' : false, backgroundColor: def.hex + '33' }] },
+      options: {
+        animation: false, parsing: false, normalized: true, responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false, axis: 'x' },
+        plugins: { legend: { display: false }, tooltip: { enabled: false }, decimation: { enabled: false } },
+        scales: {
+          x: { type: 'linear', min: 0, max: maxKm, grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 8, callback: v => Number.isInteger(v) ? v + ' km' : (maxKm < 2 ? v.toFixed(1).replace('.', ',') + ' km' : '') } },
+          y: { reverse: !!def.reverse, min: def.min, max: def.max, grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 5, ...(def.key === 'pace' ? { stepSize: [15, 30, 60, 120, 300].find(x => (def.max - def.min) / x <= 5) || 300, maxTicksLimit: 7 } : {}), callback: v => def.fmt(v) } },
+        },
+        onHover: (e, els) => { if (els.length) setHover(els[0].index); },
+      },
+      plugins: [crosshair],
+    });
+    ch._def = def;
+    ch.canvas.addEventListener('mouseleave', () => setHover(null));
+    detailCharts.push(ch);
+  }
+}
+function setHover(i) {
+  hoverIdx = i;
+  detailCharts.forEach(c => c.draw());
+  const r = $('#readout'); if (!r || !curStreams) return;
+  if (i == null) { if (hoverMarker) { hoverMarker.setStyle({ opacity: 0, fillOpacity: 0 }); } return; }
+  const s = curStreams;
+  const parts = [`<span><b>${(s.d[i] / 1000).toFixed(2).replace('.', ',')}</b> km</span>`, `<span><b>${C.fmtDur(s.t[i])}</b></span>`];
+  for (const c of detailCharts) { const v = c._def.data[i]; if (v != null) parts.push(`<span><b>${c._def.fmt(v)}</b> ${c._def.unit}</span>`); }
+  r.innerHTML = parts.join('');
+  if (hoverMarker && s.lat[i] != null) { hoverMarker.setLatLng([s.lat[i], s.lon[i]]); hoverMarker.setStyle({ opacity: 1, fillOpacity: 1 }); }
+}
+let hlLayer = null;
+function toggleEffort(btn) {
+  const m = btn.dataset.m, s = curStreams;
+  const was = btn.classList.contains('active');
+  document.querySelectorAll('.effort-chip').forEach(b => b.classList.remove('active'));
+  if (hlLayer && map) { map.removeLayer(hlLayer); hlLayer = null; }
+  hl = null;
+  if (!was && s?.efforts?.[m]) {
+    btn.classList.add('active');
+    const [i0, i1] = s.efforts[m];
+    hl = [s.d[i0] / 1000, s.d[i1] / 1000];
+    if (map) {
+      const seg = []; for (let i = i0; i <= i1; i++) if (s.lat[i] != null) seg.push([s.lat[i], s.lon[i]]);
+      if (seg.length > 1) { hlLayer = L.polyline(seg, { color: '#fbbf24', weight: 7, opacity: .9 }).addTo(map); map.fitBounds(hlLayer.getBounds(), { padding: [24, 24] }); }
+    }
+  } else if (map && mapLayers.length) {
+    map.fitBounds(L.featureGroup(mapLayers).getBounds(), { padding: [18, 18] });
+  }
+  detailCharts.forEach(c => c.draw());
+}
+async function renameActivity(a) {
+  const t = prompt('Nazwa treningu:', activityTitle(a));
+  if (t == null) return;
+  a.title = t.trim() || null; a.updated = Date.now();
+  await persistLocal(); renderAll();
+  $('#detail-title b').textContent = activityTitle(a);
+  sync();
+}
+async function deleteActivity(a) {
+  if (!confirm(`Usunąć „${activityTitle(a)}” z ${fmtDate(a.start)}?\n\nOryginalny plik FIT trafi do kosza na Dysku Google (można go stamtąd odzyskać).`)) return;
+  db.activities = db.activities.filter(x => x.id !== a.id);
+  db.deleted = [...new Set([...db.deleted, a.id])];
+  await idb.del('streams', a.id); await persistLocal();
+  closeDetail(); renderAll();
+  if (a.fileId && token) trashFile(a.fileId);
+  sync();
+  toast('Usunięto trening');
+}
+
+// ══ WIDOK: REKORDY ══════════════════════════════════════════════════════════
+let openRec = new Set(), recCharts = [];
+function renderRecords() {
+  recCharts.forEach(c => c.destroy()); recCharts = [];
+  const el = $('#view-records');
+  const runs = acts().filter(C.isRun);
+  if (!runs.length) { el.innerHTML = `<div class="empty">Rekordy pojawią się po wgraniu pierwszych biegów.</div>`; return; }
+  const tables = C.recordTables(acts(), 10);
+  const form = C.currentForm(acts());
+  let html = `<h2 class="sec">Aktualna forma</h2>`;
+  if (form) {
+    html += `<div class="card form-card"><div class="form-top"><div class="vd num">${form.vdot.toFixed(1)}<small>VDOT</small></div>
+      <div class="muted" style="font-size:13px">na podstawie: ${esc(form.label)} w ${C.fmtDur(form.time)} (${fmtDate(form.start)})</div></div>
+      <div class="predict">${form.predict.map(p => `<div><div class="l">${{ 5000: '5 km', 10000: '10 km', 21097.5: 'Półmaraton', 42195: 'Maraton' }[p.m]}</div><div class="v num">${C.fmtDur(p.time)}</div><div class="p num">${C.fmtPace(p.time / p.m * 1000)} /km</div></div>`).join('')}</div>
+      <p class="muted" style="font-size:11.5px;margin-top:10px">Prognoza z tabel VDOT Danielsa, z najlepszego odcinka ≥ 3 km z ostatnich 90 dni. Dłuższe dystanse zakładają odpowiedni trening wytrzymałościowy.</p></div>`;
+  } else html += `<div class="card empty">Brak biegu ≥ 3 km z ostatnich 90 dni.</div>`;
+
+  html += `<h2 class="sec">Rekordy życiowe</h2><div class="card">`;
+  for (const { m, label } of C.BEST_DISTANCES) {
+    const t = tables[m], best = t[0];
+    if (!best) { html += `<div class="rec-row none"><div class="rec-head"><div class="d">${label}</div><div class="t">—</div><div class="p"></div></div></div>`; continue; }
+    html += `<div class="rec-row ${openRec.has(m) ? 'open' : ''}" data-m="${m}">
+      <div class="rec-head"><div class="d">${label}</div><div class="t num">${C.fmtDur(best.time)}</div><div class="p num">${C.fmtPace(best.time / m * 1000)} /km</div><div class="w">${fmtDate(best.start)}</div><div class="chev">▶</div></div>
+      <div class="rec-body"><div class="chart-box" style="height:120px"><canvas data-prog="${m}"></canvas></div>
+      <div class="top-list">${t.map((e, i) => `<div class="top-item num" data-id="${e.id}"><span class="n">${i + 1}.</span><span class="tm">${C.fmtDur(e.time)}</span><span class="dt">${fmtDate(e.start)}</span><span class="muted">${C.fmtPace(e.time / m * 1000)}</span></div>`).join('')}</div></div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // pozostałe rekordy
+  const maxBy = f => runs.reduce((b, a) => (f(a) > f(b) ? a : b), runs[0]);
+  const longest = maxBy(a => a.distance), longestT = maxBy(a => a.timer), highest = maxBy(a => a.ascent || 0);
+  const weeks = C.totalsBy(acts(), a => C.weekStart(a.start)).sort((a, b) => b.km - a.km)[0];
+  const months = C.totalsBy(acts(), a => { const d = new Date(a.start); return d.getFullYear() * 100 + d.getMonth(); }).sort((a, b) => b.km - a.km)[0];
+  const mName = k => `${MONTHS[k % 100]} ${Math.floor(k / 100)}`;
+  html += `<h2 class="sec">Inne rekordy</h2><div class="other-recs">
+    <div class="tile" data-id="${longest.id}"><div class="lbl">Najdłuższy bieg</div><div class="val num">${C.fmtKm(longest.distance)}<small>km</small></div><div class="sub">${fmtDate(longest.start)}</div></div>
+    <div class="tile" data-id="${longestT.id}"><div class="lbl">Najdłuższy czas</div><div class="val num">${C.fmtDur(longestT.timer)}</div><div class="sub">${fmtDate(longestT.start)}</div></div>
+    <div class="tile" data-id="${highest.id}"><div class="lbl">Największe przewyższenie</div><div class="val num">${highest.ascent || 0}<small>m</small></div><div class="sub">${fmtDate(highest.start)}</div></div>
+    <div class="tile"><div class="lbl">Najwięcej w tygodniu</div><div class="val num">${weeks.km.toFixed(1).replace('.', ',')}<small>km</small></div><div class="sub">od ${fmtDate(weeks.key)}</div></div>
+    <div class="tile"><div class="lbl">Najwięcej w miesiącu</div><div class="val num">${months.km.toFixed(1).replace('.', ',')}<small>km</small></div><div class="sub">${mName(months.key)}</div></div>
+    <div class="tile"><div class="lbl">Wszystkie biegi</div><div class="val num">${Math.round(runs.reduce((s, a) => s + a.distance, 0) / 1000)}<small>km</small></div><div class="sub">${runs.length} ${plural(runs.length, 'bieg', 'biegi', 'biegów')}</div></div>
+  </div>`;
+  el.innerHTML = html;
+  el.querySelectorAll('.rec-row[data-m] .rec-head').forEach(h => h.onclick = () => {
+    const row = h.parentElement, m = Number(row.dataset.m);
+    openRec.has(m) ? openRec.delete(m) : openRec.add(m);
+    renderRecords();
+  });
+  el.querySelectorAll('[data-id]').forEach(x => x.onclick = e => { e.stopPropagation(); openDetail(x.dataset.id); });
+  el.querySelectorAll('canvas[data-prog]').forEach(cv => drawProgression(cv, Number(cv.dataset.prog)));
+}
+function drawProgression(cv, m) {
+  const prog = C.recordProgression(acts(), m);
+  const pts = prog.map(p => ({ x: p.start, y: p.time }));
+  if (pts.length) pts.push({ x: Date.now(), y: pts[pts.length - 1].y });
+  const ch = new Chart(cv, {
+    type: 'line',
+    data: { datasets: [{ data: pts, stepped: 'before', borderColor: '#fbbf24', borderWidth: 2, pointRadius: pts.map((_, i) => i < prog.length ? 4 : 0), pointBackgroundColor: '#fbbf24', pointBorderColor: '#1e1e1e', pointBorderWidth: 2, pointHitRadius: 14 }] },
+    options: {
+      animation: false, parsing: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { displayColors: false, backgroundColor: '#000d', filter: it => it.dataIndex < prog.length, callbacks: { title: it => fmtDate(it[0].parsed.x), label: it => 'Rekord: ' + C.fmtDur(it.parsed.y) } } },
+      scales: {
+        x: { type: 'linear', grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 5, callback: v => { const d = new Date(v); return MONTHS_SHORT[d.getMonth()] + ' ' + String(d.getFullYear()).slice(2); } } },
+        y: { reverse: true, grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 4, callback: v => C.fmtDur(v) } },
+      },
+    },
+  });
+  recCharts.push(ch);
+}
+
+// ══ WIDOK: STATYSTYKI ═══════════════════════════════════════════════════════
+let statCharts = [], statYear = new Date().getFullYear();
+function renderStats() {
+  statCharts.forEach(c => c.destroy()); statCharts = [];
+  const el = $('#view-stats');
+  const runs = acts().filter(C.isRun);
+  if (!runs.length) { el.innerHTML = `<div class="empty">Statystyki pojawią się po wgraniu pierwszych biegów.</div>`; return; }
+  const years = [...new Set(runs.map(a => new Date(a.start).getFullYear()))].sort((a, b) => b - a);
+  if (!years.includes(statYear)) statYear = years[0];
+  const weekly = C.weeklyTotals(acts(), 26);
+  const avg12 = weekly.slice(-12).reduce((s, w) => s + w.km, 0) / 12;
+  let html = `<h2 class="sec">Kilometry tygodniowo · ostatnie 26 tygodni</h2>
+    <div class="card chart-card"><div class="chart-head"><b><i style="background:var(--accent)"></i>km / tydzień</b><span class="num">śr. z 12 tyg.: ${avg12.toFixed(1).replace('.', ',')} km</span></div><div class="chart-box" style="height:170px"><canvas id="ch-weekly"></canvas></div></div>
+    <h2 class="sec">Rok do roku · narastająco</h2>
+    <div class="card chart-card"><div class="chart-head"><b>Kilometry od 1 stycznia</b><span class="num" id="yoy-head"></span></div><div class="chart-box" style="height:190px"><canvas id="ch-yoy"></canvas></div><div class="heat-legend" id="yoy-legend" style="justify-content:flex-start;gap:12px"></div></div>
+    <h2 class="sec">Kalendarz biegów</h2>
+    <div class="year-tabs">${years.map(y => `<button class="chip ${y === statYear ? 'active' : ''}" data-y="${y}">${y}</button>`).join('')}</div>
+    <div class="card heat-wrap">${heatmapSvg(statYear)}<div class="heat-legend">mniej ${HEAT.map(c => `<i style="background:${c}"></i>`).join('')} więcej</div></div>
+    <h2 class="sec">Podsumowanie lat</h2>${yearsTable(years)}
+    <h2 class="sec">${statYear} · miesiące</h2>${monthsTable(statYear)}`;
+  el.innerHTML = html;
+  el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => { statYear = Number(b.dataset.y); renderStats(); });
+  el.querySelectorAll('tr[data-y]').forEach(r => r.onclick = () => { statYear = Number(r.dataset.y); renderStats(); });
+  bindHeatTips(el);
+  const hw = el.querySelector('.heat-wrap');
+  if (hw && statYear === new Date().getFullYear()) { const frac = (Date.now() - new Date(statYear, 0, 1)) / 31536e6; hw.scrollLeft = Math.max(0, hw.scrollWidth * frac - hw.clientWidth + 60); }
+
+  // tygodnie
+  statCharts.push(new Chart($('#ch-weekly'), {
+    type: 'bar',
+    data: { labels: weekly.map(w => w.week), datasets: [{ data: weekly.map(w => w.km), backgroundColor: weekly.map((w, i) => i === weekly.length - 1 ? '#4ade80' : '#4ade8099'), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', barPercentage: .82, categoryPercentage: 1 }] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { displayColors: false, backgroundColor: '#000d', callbacks: { title: it => { const s = weekly[it[0].dataIndex].week; const e = s + 6 * 864e5; return fmtDate(s) + ' – ' + fmtDate(e); }, label: it => { const w = weekly[it.dataIndex]; return `${w.km.toFixed(1).replace('.', ',')} km · ${w.count} ${plural(w.count, 'bieg', 'biegi', 'biegów')} · ${C.fmtDur(w.time)}`; } } } },
+      scales: {
+        x: { grid: { display: false }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 7, callback: (v, i) => { const d = new Date(weekly[i].week); return d.getDate() + ' ' + MONTHS_SHORT[d.getMonth()]; } } },
+        y: { beginAtZero: true, grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 5 } },
+      },
+    },
+  }));
+
+  // rok do roku — bieżący rok i poprzedni
+  const thisY = new Date().getFullYear();
+  const cum = y => {
+    const s = new Date(y, 0, 1).getTime(), out = [];
+    const rs = runs.filter(a => new Date(a.start).getFullYear() === y).sort((a, b) => a.start - b.start);
+    let acc = 0, j = 0;
+    const days = y === thisY ? Math.floor((Date.now() - s) / 864e5) + 1 : (new Date(y, 11, 31) - s) / 864e5 + 1;
+    for (let d = 0; d < days; d++) { const e = s + (d + 1) * 864e5; while (j < rs.length && rs[j].start < e) acc += rs[j++].distance / 1000; out.push({ x: d, y: acc }); }
+    return out;
+  };
+  const cy = cum(thisY), py = cum(thisY - 1);
+  const ds = [{ label: String(thisY), data: cy, borderColor: '#4ade80', borderWidth: 2, pointRadius: 0 }];
+  if (py[py.length - 1]?.y > 0) ds.push({ label: String(thisY - 1), data: py, borderColor: '#8a8a8a', borderWidth: 2, borderDash: [5, 4], pointRadius: 0 });
+  const today = cy.length - 1, last = py[Math.min(today, py.length - 1)]?.y || 0, now = cy[today]?.y || 0;
+  $('#yoy-head').textContent = ds.length > 1 ? `${Math.round(now)} km vs ${Math.round(last)} km rok temu (${now >= last ? '+' : ''}${Math.round(now - last)})` : `${Math.round(now)} km`;
+  $('#yoy-legend').innerHTML = ds.map(d => `<span style="display:flex;align-items:center;gap:5px"><i style="width:14px;height:3px;border-radius:2px;background:${d.borderColor}"></i>${d.label}</span>`).join('');
+  statCharts.push(new Chart($('#ch-yoy'), {
+    type: 'line', data: { datasets: ds },
+    options: {
+      animation: false, parsing: false, responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#000d', callbacks: { title: it => { const d = new Date(thisY, 0, 1 + it[0].parsed.x); return d.getDate() + ' ' + MONTHS_SHORT[d.getMonth()]; }, label: it => ` ${it.dataset.label}: ${it.parsed.y.toFixed(1).replace('.', ',')} km` } } },
+      scales: {
+        x: { type: 'linear', min: 0, max: 365, grid: { color: '#ffffff0d' }, border: { display: false }, afterBuildTicks: ax => { ax.ticks = Array.from({ length: 12 }, (_, i) => ({ value: Math.round((new Date(thisY, i, 1) - new Date(thisY, 0, 1)) / 864e5) })); }, ticks: { color: '#777', font: { size: 10 }, autoSkip: true, maxRotation: 0, callback: v => MONTHS_SHORT[new Date(thisY, 0, 1 + v).getMonth()] } },
+        y: { beginAtZero: true, grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#777', font: { size: 10 }, maxTicksLimit: 5 } },
+      },
+    },
+  }));
+}
+const HEAT = ['#262626', '#1d4d33', '#22743f', '#2ea24f', '#4ade80'];
+function heatmapSvg(year) {
+  const runs = acts().filter(a => C.isRun(a) && new Date(a.start).getFullYear() === year);
+  const perDay = new Map();
+  for (const a of runs) { const d = new Date(a.start); const k = `${d.getMonth()}-${d.getDate()}`; const o = perDay.get(k) || { km: 0, n: 0 }; o.km += a.distance / 1000; o.n++; perDay.set(k, o); }
+  const level = km => !km ? 0 : km < 5 ? 1 : km < 10 ? 2 : km < 16 ? 3 : 4;
+  const cell = 12, gap = 3, left = 22, top = 16;
+  const jan1 = new Date(year, 0, 1), off = (jan1.getDay() + 6) % 7;
+  const days = (new Date(year + 1, 0, 1) - jan1) / 864e5;
+  const cols = Math.ceil((days + off) / 7);
+  let s = `<svg width="${left + cols * (cell + gap)}" height="${top + 7 * (cell + gap)}" style="display:block">`;
+  ['pn', '', 'śr', '', 'pt', '', 'nd'].forEach((t, i) => { if (t) s += `<text x="0" y="${top + i * (cell + gap) + 10}" font-size="9" fill="#777">${t}</text>`; });
+  let lastM = -1;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(year, 0, 1 + i), c = Math.floor((i + off) / 7), r = (i + off) % 7;
+    if (d.getMonth() !== lastM && r === 0 || (i === 0)) { if (d.getMonth() !== lastM) { s += `<text x="${left + c * (cell + gap)}" y="10" font-size="9" fill="#777">${MONTHS_SHORT[d.getMonth()]}</text>`; lastM = d.getMonth(); } }
+    const o = perDay.get(`${d.getMonth()}-${d.getDate()}`);
+    s += `<rect x="${left + c * (cell + gap)}" y="${top + r * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="${HEAT[level(o?.km)]}" data-tip="${fmtDate(d.getTime())}: ${o ? o.km.toFixed(1).replace('.', ',') + ' km' + (o.n > 1 ? ' (' + o.n + ' biegi)' : '') : 'bez biegu'}"/>`;
+  }
+  return s + '</svg>';
+}
+function bindHeatTips(el) {
+  const tip = $('#tip');
+  el.querySelectorAll('rect[data-tip]').forEach(r => {
+    const show = e => { tip.textContent = r.dataset.tip; tip.style.display = 'block'; const b = r.getBoundingClientRect(); tip.style.left = Math.min(innerWidth - tip.offsetWidth - 8, Math.max(8, b.left + b.width / 2 - tip.offsetWidth / 2)) + 'px'; tip.style.top = (b.top - tip.offsetHeight - 6) + 'px'; };
+    r.addEventListener('mouseenter', show); r.addEventListener('click', show);
+    r.addEventListener('mouseleave', () => tip.style.display = 'none');
+  });
+}
+function yearsTable(years) {
+  const t = C.totalsBy(acts(), a => new Date(a.start).getFullYear());
+  return `<div class="card"><table class="years num"><thead><tr><th>Rok</th><th>km</th><th>Biegi</th><th>Czas</th><th class="hide-m">Śr. tempo</th><th class="hide-m">↑ m</th></tr></thead><tbody>${t.map(y => `<tr class="click ${y.key === statYear ? 'sel' : ''}" data-y="${y.key}"><td><b>${y.key}</b></td><td>${Math.round(y.km)}</td><td>${y.count}</td><td>${C.fmtDur(y.time)}</td><td class="hide-m">${C.fmtPace(y.time / y.km)}</td><td class="hide-m">${Math.round(y.ascent)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function monthsTable(year) {
+  const t = C.totalsBy(acts().filter(a => new Date(a.start).getFullYear() === year), a => new Date(a.start).getMonth());
+  const map = new Map(t.map(x => [x.key, x]));
+  const maxKm = Math.max(1, ...t.map(x => x.km));
+  let rows = '';
+  const firstM = t.length ? Math.min(...t.map(x => x.key)) : 0;
+  for (let mI = firstM; mI < 12; mI++) {
+    const x = map.get(mI);
+    if (!x && (year === new Date().getFullYear() && mI > new Date().getMonth())) continue;
+    rows += `<tr><td>${MONTHS[mI]}</td><td style="width:38%"><div class="sbar" style="width:${x ? Math.max(3, x.km / maxKm * 100) : 0}%;background:var(--accent);opacity:.8"></div></td><td>${x ? x.km.toFixed(1).replace('.', ',') : '–'}</td><td>${x ? x.count : '–'}</td><td class="hide-m">${x ? C.fmtPace(x.time / x.km) : '–'}</td></tr>`;
+  }
+  return `<div class="card"><table class="years num"><thead><tr><th>Miesiąc</th><th></th><th>km</th><th>Biegi</th><th class="hide-m">Śr. tempo</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ══ NAWIGACJA / START ═══════════════════════════════════════════════════════
+function setView(v) {
+  view = v;
+  document.querySelectorAll('.mnav,.bnav').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + v));
+  renderView(); $('#main').scrollTop = 0;
+}
+function renderView() { if (view === 'list') renderList(); else if (view === 'records') renderRecords(); else renderStats(); }
+function renderAll() { renderView(); }
+
+document.querySelectorAll('.mnav,.bnav').forEach(b => b.onclick = () => setView(b.dataset.view));
+$('#import-btn').onclick = () => $('#file-input').click();
+$('#file-input').onchange = e => { const f = [...e.target.files]; e.target.value = ''; importFiles(f); };
+$('#detail-back').onclick = () => history.state?.d ? history.back() : closeDetail();
+window.addEventListener('popstate', () => { if (!location.hash.startsWith('#t=')) closeDetail(); else openDetail(location.hash.slice(3)); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#detail').classList.contains('open')) $('#detail-back').click(); });
+
+// menu Drive
+$('#drive-btn').onclick = e => {
+  e.stopPropagation();
+  if (!token && !localStorage.getItem(LS('connected'))) { connect(); return; }
+  const m = $('#drive-menu'); m.style.display = m.style.display === 'none' ? '' : 'none';
+};
+document.addEventListener('click', e => { if (!e.target.closest('.drive-wrap')) $('#drive-menu').style.display = 'none'; });
+$('#drive-menu').onclick = async e => {
+  const act = e.target.closest('button')?.dataset.act; if (!act) return;
+  $('#drive-menu').style.display = 'none';
+  if (act === 'sync') { if (!token) await ensureToken(true); sync({ quiet: false }); }
+  if (act === 'recompute') recomputeAll();
+  if (act === 'disconnect') { if (confirm('Odłączyć konto Google w tej przeglądarce?')) disconnect(); }
+  if (act === 'export') {
+    const blob = new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `przebieg-baza-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  if (act === 'status') {
+    const last = localStorage.getItem(LS('last_sync'));
+    const m = modal(`<h3>Status synchronizacji</h3><p>
+      Konto Google: <b>${token ? '✅ połączone' : '❌ brak połączenia'}</b>${googleHint() ? ' (' + esc(googleHint()) + ')' : ''}<br>
+      Ostatnia synchronizacja: <b>${last ? new Date(Number(last)).toLocaleString('pl') : 'nigdy'}</b><br>
+      Treningi w bazie: <b>${acts().length}</b><br><br>
+      Dane leżą na Twoim Dysku w folderze <b>Przebieg</b>: oryginały FIT w <b>Przebieg/surowe</b>, wyliczona baza w <b>Przebieg/baza.json</b>.</p>
+      <div class="actions"><button class="btn-sm">OK</button></div>`);
+    m.querySelector('.btn-sm').onclick = m.close;
+  }
+};
+
+// przeciąganie plików na okno
+let dragN = 0;
+window.addEventListener('dragenter', e => { if (e.dataTransfer?.types?.includes('Files')) { dragN++; $('#drop-hint').style.display = 'flex'; } });
+window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; $('#drop-hint').style.display = 'none'; } });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => { e.preventDefault(); dragN = 0; $('#drop-hint').style.display = 'none'; const f = [...(e.dataTransfer?.files || [])]; if (f.length) importFiles(f); });
+
+// powrót do karty → dociągnij zmiany z innych urządzeń
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && token) sync(); });
+
+(async function start() {
+  const local = await idb.get('kv', 'db');
+  if (local?.activities) db = local;
+  renderAll();
+  updateDriveBtn();
+  if (location.hash.startsWith('#t=')) openDetail(location.hash.slice(3));
+  if (localStorage.getItem(LS('connected'))) sync();
+})();
+
+// hak testowy: pozwala wczytać bazę bez logowania (np. podgląd lokalny)
+window.__przebieg = { setDb: async d => { db = d; await persistLocal(); renderAll(); }, putStreams: (id, s) => idb.put('streams', id, s), open: openDetail };
+</script>
+</body>
+</html>
