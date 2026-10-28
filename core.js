@@ -1,7 +1,7 @@
 // Przebieg — rdzeń: odczyt FIT i wszystkie obliczenia biegowe.
 // Bez DOM i bez sieci, żeby dało się to testować i przeliczać w dowolnym miejscu.
 
-export const ENGINE_VERSION = 1; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
+export const ENGINE_VERSION = 2; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
 
 // Dystanse, dla których szukamy najlepszych odcinków (w metrach)
 export const BEST_DISTANCES = [
@@ -273,6 +273,38 @@ export function buildActivity(parsed, extra = {}) {
   for (let i = 0; i < n; i++) if (P.lat[i] != null && P.lon[i] != null) gps.push([P.lon[i], P.lat[i]]);
   const route = simplifyRoute(gps, 0.00012).map(([x, y]) => [Math.round(y * 1e5) / 1e5, Math.round(x * 1e5) / 1e5]);
 
+  // rozkład tętna: sekundy stopera na każde uderzenie (do stref liczonych przy wyświetlaniu)
+  let hrLo = Infinity, hrHi = -Infinity;
+  for (const h of P.hr) if (h != null) { if (h < hrLo) hrLo = h; if (h > hrHi) hrHi = h; }
+  let hrHist = null;
+  if (Number.isFinite(hrLo)) {
+    const s = new Array(hrHi - hrLo + 1).fill(0);
+    for (let i = 1; i < n; i++) {
+      const h = P.hr[i]; if (h == null) continue;
+      const dt = tt[i] - tt[i - 1];
+      if (dt > 0 && dt < 15) s[h - hrLo] += dt;
+    }
+    hrHist = { lo: hrLo, s: s.map(v => Math.round(v)) };
+  }
+  // dane minutowe (czas stopera): [średnie tętno | null, prędkość m/s ×100]
+  const mins = [];
+  {
+    let k = 0, i0 = 0;
+    for (let i = 1; i < n; i++) {
+      if (tt[i] >= (k + 1) * 60 || i === n - 1) {
+        const dt = tt[i] - tt[i0];
+        if (dt >= 30) {
+          let hs = 0, hc = 0;
+          for (let j = i0; j <= i; j++) if (P.hr[j] != null) { hs += P.hr[j]; hc++; }
+          mins.push([hc ? Math.round(hs / hc) : null, Math.round(((d[i] - d[i0]) / dt) * 100)]);
+        }
+        k = Math.floor(tt[i] / 60); i0 = i;
+      }
+    }
+  }
+  let startPos = null;
+  for (let i = 0; i < n; i++) if (P.lat[i] != null && P.lon[i] != null) { startPos = [Math.round(P.lat[i] * 1e3) / 1e3, Math.round(P.lon[i] * 1e3) / 1e3]; break; }
+
   const id = 'r' + parsed.start.toString(36);
   const summary = {
     id,
@@ -294,6 +326,9 @@ export function buildActivity(parsed, extra = {}) {
     bests: Object.fromEntries(Object.entries(efforts).map(([m, e]) => [m, e.time])),
     splits,
     route,
+    hrHist,
+    mins,
+    startPos,
     engine: ENGINE_VERSION,
     ...extra,
   };
@@ -453,3 +488,15 @@ export function fmtPace(sPerKm) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 export function fmtKm(m, dec = 2) { return m == null ? '–' : (m / 1000).toFixed(dec).replace('.', ','); }
+
+// ── POMIARY CIAŁA Z PLIKU FIT (wagi zapisujące weight_scale) ───────────────
+export function parseFitBody(arrayBuffer, fit) {
+  const dec = new fit.Decoder(fit.Stream.fromArrayBuffer(arrayBuffer));
+  if (!dec.isFIT()) return [];
+  const { messages } = dec.read({ includeUnknownData: false });
+  return (messages.weightScaleMesgs || []).filter(w => w.timestamp instanceof Date && Number.isFinite(w.weight)).map(w => ({
+    ts: w.timestamp.getTime(), weight: w.weight, fat: w.percentFat ?? null, water: w.percentHydration ?? null,
+    muscle: w.muscleMass ?? null, bone: w.boneMass ?? null, visceral: w.visceralFatRating ?? null,
+    bmr: w.basalMet ?? null, source: 'fit',
+  }));
+}

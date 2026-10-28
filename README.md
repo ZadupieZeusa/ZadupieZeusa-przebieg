@@ -6,13 +6,15 @@ Dziennik biegowy w stylu Endomondo. Wgrywasz pliki FIT z zegarka, a aplikacja li
 
 | Plik | Co robi |
 |---|---|
-| `index.html` | Interfejs, logowanie Google, synchronizacja z Dyskiem |
-| `core.js` | Odczyt FIT i wszystkie obliczenia (rekordy, międzyczasy, VDOT, statystyki) |
+| `index.html` | Wygląd i układ strony |
+| `app.js` | Interfejs, logowanie Google, synchronizacja z Dyskiem, import, pogoda |
+| `core.js` | Odczyt FIT, rekordy, międzyczasy, VDOT, statystyki |
+| `analysis.js` | Strefy tętna, obciążenie, raporty treningów i kondycji, skład ciała |
 | `vendor.js` | Biblioteki: dekoder FIT Garmina i rozpakowywanie ZIP |
 
 ## Wdrożenie
 
-1. Załóż na GitHubie nowe, publiczne repo `przebieg` i wrzuć do niego te trzy pliki (oraz ten README).
+1. Załóż na GitHubie nowe, publiczne repo `przebieg` i wrzuć do niego wszystkie pliki (oraz ten README).
 2. W repo wejdź w **Settings → Pages**, wybierz **Deploy from a branch**, gałąź `main`, folder `/ (root)`, a potem **Save**.
 3. Po minucie aplikacja działa pod adresem **https://zadupiezeusa.github.io/przebieg/**.
 
@@ -44,3 +46,15 @@ Przebieg/
 - **Rekordy życiowe:** top 10 na każdy dystans i wykres progresji.
 - **Forma:** VDOT Danielsa z najlepszego odcinka ≥ 3 km z ostatnich 90 dni oraz prognozy na 5 km, 10 km, półmaraton i maraton.
 - **Statystyki:** km tygodniowo, porównanie rok do roku, kalendarz biegów, podsumowania lat i miesięcy.
+
+## Wersja 2
+
+- **Menu:** Pulpit, Treningi, Postęp, Ciało i przycisk „+” (trening, pomiar ciała, import z wagi).
+- **Raport treningu:** typ biegu rozpoznany po strefach z progu mleczanowego, czas w strefach, dryf tętna, porównanie z podobnymi biegami, pogoda, notatka i rekomendacja kolejnego treningu.
+- **Raport kondycji:** tempo przy stałym tętnie, forma, zmęczenie i świeżość, rozkład intensywności 80/20, VDOT, wpływ kawy na tętno.
+- **Ciało:** pomiary ręczne albo CSV z eksportu Zepp (`timestamp, weight, fatRate, muscleRate…`), średnia 7-dniowa, trend, masa tłuszczu i beztłuszczowa, obwód pasa.
+- **Pogoda:** Open-Meteo, bez klucza, pobierana dla treningów z GPS.
+- **Mapa:** OpenStreetMap, bez klucza API.
+- **Ustawienia:** próg mleczanowy (domyślnie 163), tempo progu, tętno spoczynkowe i maksymalne, wzrost.
+
+Po wgraniu nowej wersji aplikacja zaproponuje jednorazowe przeliczenie treningów z oryginałów FIT. Bez tego stare treningi nie mają stref ani raportu.
