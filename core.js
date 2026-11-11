@@ -1,7 +1,7 @@
 // Przebieg — rdzeń: odczyt FIT i wszystkie obliczenia biegowe.
 // Bez DOM i bez sieci, żeby dało się to testować i przeliczać w dowolnym miejscu.
 
-export const ENGINE_VERSION = 2; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
+export const ENGINE_VERSION = 3; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
 
 // Dystanse, dla których szukamy najlepszych odcinków (w metrach)
 export const BEST_DISTANCES = [
@@ -20,7 +20,14 @@ export const BEST_DISTANCES = [
 const SEMI = 180 / 2 ** 31;
 const RUN_SPORTS = new Set(['running', 'trailRunning', 'treadmillRunning']);
 
-export function isRun(a) { return a && (a.sport === 'running' || RUN_SPORTS.has(a.sport)); }
+export function isRun(a) { return a && a.kind !== 'strength' && (a.sport === 'running' || RUN_SPORTS.has(a.sport)); }
+// trening siłowy: z zegarka (training / fitnessEquipment / podtyp strength) albo oznaczony ręcznie
+export function isStrength(a) {
+  if (!a) return false;
+  if (a.kind === 'strength') return true;
+  if (a.kind === 'other') return false;
+  return a.sport === 'training' || a.sport === 'fitnessEquipment' || /strength|weight|crossfit|hiit|cardio/i.test(a.subSport || '');
+}
 
 // ── ODCZYT FIT ──────────────────────────────────────────────────────────────
 // fit = moduł @garmin/fitsdk ({Decoder, Stream}); podawany z zewnątrz.
@@ -29,9 +36,13 @@ export function parseFit(arrayBuffer, fit) {
   const dec = new fit.Decoder(stream);
   if (!dec.isFIT()) throw new Error('To nie jest plik FIT');
   const { messages, errors } = dec.read({ includeUnknownData: false, mergeHeartRates: true });
-  const recs = (messages.recordMesgs || []).filter(r => r.timestamp instanceof Date);
-  if (!recs.length) throw new Error(errors?.[0]?.message || 'Plik FIT nie zawiera zapisu trasy ani czasu');
+  let recs = (messages.recordMesgs || []).filter(r => r.timestamp instanceof Date);
   const ses = (messages.sessionMesgs || [])[0] || {};
+  // trening bez zapisu sekundowego (np. siłowy) — dwa punkty z czasu sesji
+  if (!recs.length && ses.startTime instanceof Date && Number.isFinite(ses.totalElapsedTime)) {
+    recs = [{ timestamp: ses.startTime }, { timestamp: new Date(ses.startTime.getTime() + ses.totalElapsedTime * 1000) }];
+  }
+  if (!recs.length) throw new Error(errors?.[0]?.message || 'Plik FIT nie zawiera zapisu trasy ani czasu');
   const fileId = (messages.fileIdMesgs || [])[0] || {};
   const sportMsg = (messages.sportMesgs || [])[0] || {};
   const start = (ses.startTime instanceof Date ? ses.startTime : recs[0].timestamp).getTime();
@@ -51,7 +62,8 @@ export function parseFit(arrayBuffer, fit) {
   }
 
   const n = recs.length;
-  const P = { ts: new Float64Array(n), lat: new Array(n), lon: new Array(n), d: new Array(n), ele: new Array(n), hr: new Array(n), cad: new Array(n), spd: new Array(n) };
+  const P = { ts: new Float64Array(n), lat: new Array(n), lon: new Array(n), d: new Array(n), ele: new Array(n), hr: new Array(n), cad: new Array(n), spd: new Array(n),
+    gct: new Array(n), stepLen: new Array(n), vo: new Array(n), vr: new Array(n), pow: new Array(n) };
   for (let i = 0; i < n; i++) {
     const r = recs[i];
     P.ts[i] = r.timestamp.getTime();
@@ -66,6 +78,12 @@ export function parseFit(arrayBuffer, fit) {
     P.cad[i] = c;
     const s = Number.isFinite(r.enhancedSpeed) ? r.enhancedSpeed : r.speed;
     P.spd[i] = Number.isFinite(s) ? s : null;
+    // dynamika biegu (Zepp, Garmin z czujnikiem): czas kontaktu [ms], długość kroku [mm], oscylacja [mm], ratio [%], moc [W]
+    P.gct[i] = Number.isFinite(r.stanceTime) && r.stanceTime > 0 ? r.stanceTime : null;
+    P.stepLen[i] = Number.isFinite(r.stepLength) && r.stepLength > 0 ? r.stepLength : null;
+    P.vo[i] = Number.isFinite(r.verticalOscillation) && r.verticalOscillation > 0 ? r.verticalOscillation : null;
+    P.vr[i] = Number.isFinite(r.verticalRatio) && r.verticalRatio > 0 ? r.verticalRatio : null;
+    P.pow[i] = Number.isFinite(r.power) && r.power > 0 ? r.power : null;
   }
 
   return {
@@ -77,6 +95,7 @@ export function parseFit(arrayBuffer, fit) {
       elapsed: ses.totalElapsedTime, timer: ses.totalTimerTime, distance: ses.totalDistance,
       ascent: ses.totalAscent, descent: ses.totalDescent, avgHr: ses.avgHeartRate, maxHr: ses.maxHeartRate,
       calories: ses.totalCalories, avgCad: ses.avgRunningCadence ?? ses.avgCadence,
+      te: ses.totalTrainingEffect, teAn: ses.totalAnaerobicTrainingEffect,
     },
     laps: (messages.lapMesgs || []).map(l => ({
       start: l.startTime instanceof Date ? l.startTime.getTime() : null,
@@ -302,6 +321,13 @@ export function buildActivity(parsed, extra = {}) {
       }
     }
   }
+  // średnie dynamiki biegu z minut ruchu (bez postojów i marszu)
+  let tech = null;
+  if (run) {
+    const pick = arr => { const v = []; for (let i = 0; i < n; i++) if (arr[i] != null && (P.spd[i] ?? 0) >= 1.6) v.push(arr[i]); return v.length > 30 ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    const t = { gct: pick(P.gct), stepLen: pick(P.stepLen), vo: pick(P.vo), vr: pick(P.vr), power: pick(P.pow) };
+    if (Object.values(t).some(v => v != null)) tech = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v == null ? null : Math.round(v * 10) / 10]));
+  }
   let startPos = null;
   for (let i = 0; i < n; i++) if (P.lat[i] != null && P.lon[i] != null) { startPos = [Math.round(P.lat[i] * 1e3) / 1e3, Math.round(P.lon[i] * 1e3) / 1e3]; break; }
 
@@ -329,6 +355,8 @@ export function buildActivity(parsed, extra = {}) {
     hrHist,
     mins,
     startPos,
+    tech,
+    te: Number.isFinite(S.te) ? Math.round(S.te * 10) / 10 : null,
     engine: ENGINE_VERSION,
     ...extra,
   };

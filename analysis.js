@@ -2,7 +2,7 @@
 // Czyste funkcje bez DOM. Teksty po polsku, liczone wyłącznie z danych użytkownika.
 import { isRun, fmtPace, fmtDur, fmtKm, vdot, BEST_DISTANCES, newRecordsFor, currentForm, weekStart } from './core.js';
 
-export const DEFAULT_SETTINGS = { lthr: 163, thrPace: 427, restHr: 60, maxHr: 187, height: null };
+export const DEFAULT_SETTINGS = { lthr: 164, thrPace: 416, restHr: 60, maxHr: 187, height: null };
 const DAY = 864e5;
 const r1 = v => (Math.round(v * 10) / 10).toFixed(1).replace('.', ',');
 const pct = v => Math.round(v * 100) + '%';
@@ -476,4 +476,231 @@ export function annotateTypes(acts, s) {
   const sorted = [...acts].sort((a, b) => a.start - b.start);
   for (const a of sorted) a._type = classify(a, sorted, s);
   return acts;
+}
+
+// ══ WERSJA 3 ════════════════════════════════════════════════════════════════
+import { isStrength, haversine, recordProgression, weekStreak } from './core.js';
+
+// ── AUTOMATYCZNY PRÓG ──────────────────────────────────────────────────────
+// Najmocniejsze równe 20 minut biegu (bez rozgrzewki, bez postojów): średnie tętno ≈ próg
+// (metoda Friela). Proponujemy tylko podniesienie progu — spadku z luźnych biegów nie da się ocenić.
+export function estimateThreshold(acts, s, now = Date.now()) {
+  let best = null;
+  for (const a of acts) {
+    if (!isRun(a) || a.start < now - 60 * DAY || !a.mins) continue;
+    const m = a.mins;
+    for (let i = 5; i + 20 <= m.length; i++) {
+      const w = m.slice(i, i + 20);
+      if (w.some(x => x[0] == null || x[1] < 160)) continue;
+      const sp = w.map(x => x[1]), avg = mean(sp);
+      const cv = Math.sqrt(mean(sp.map(v => (v - avg) ** 2))) / avg;
+      if (cv > 0.12) continue;   // nierówne tempo (interwały, podbiegi) — pomijamy
+      const hr = mean(w.map(x => x[0]));
+      if (!best || hr > best.hr) best = { hr, pace: 100000 / avg, runId: a.id, start: a.start };
+    }
+  }
+  if (!best || best.hr < 0.95 * s.lthr) return null;
+  const lthr = Math.round(best.hr);
+  if (lthr < s.lthr + 2 || best.runId === s.ltDismissed) return null;
+  return { lthr, pace: Math.round(best.pace), runId: best.runId, start: best.start };
+}
+
+// ── PODSUMOWANIE TYGODNIA ──────────────────────────────────────────────────
+export function weekSummary(acts, body, s, from, planSessions = null) {
+  const to = from + 7 * DAY;
+  const runs = acts.filter(a => isRun(a) && a.start >= from && a.start < to);
+  const str = acts.filter(a => isStrength(a) && a.start >= from && a.start < to);
+  const prevRuns = acts.filter(a => isRun(a) && a.start >= from - 7 * DAY && a.start < from);
+  const km = runs.reduce((x, a) => x + a.distance / 1000, 0), prevKm = prevRuns.reduce((x, a) => x + a.distance / 1000, 0);
+  const time = runs.reduce((x, a) => x + a.timer, 0);
+  const split = intensitySplit(acts, s, from, to), tot = split[0] + split[1] + split[2];
+  const easy = tot ? split[0] / tot : null;
+  const avgW = (a, b) => { const w = body.filter(e => e.ts >= a && e.ts < b && e.weight); return w.length ? mean(w.map(e => e.weight)) : null; };
+  const wNow = avgW(from, to), wPrev = avgW(from - 7 * DAY, from);
+  let plan = null;
+  if (planSessions) {
+    const inW = planSessions.filter(x => x.planned >= from && x.planned < to);
+    if (inW.length) plan = { total: inW.length, done: inW.filter(x => x.status === 'done').length, ok: inW.filter(x => x.status === 'done' && (!x.comp || x.comp.ok)).length, missed: inW.filter(x => x.status === 'missed' || x.status === 'skipped').length };
+  }
+  let tip;
+  if (!runs.length) tip = 'Tydzień bez biegania — wróć spokojnie, 25–30 minut w strefie 2.';
+  else if (easy != null && easy < 0.6) tip = `Tylko ${pct(easy)} czasu łatwo. W tym tygodniu zwolnij spokojne biegi — tętno do ${zonesFor(s.lthr)[1].hi}.`;
+  else if (plan && plan.missed) tip = `Przepadło ${plan.missed} z ${plan.total} treningów planu. Jeśli to się powtarza, zmniejsz liczbę dni w planie — regularność ważniejsza niż objętość.`;
+  else if (prevKm > 3 && km > prevKm * 1.3) tip = `Kilometraż skoczył o ${pct(km / prevKm - 1)}. W kolejnym tygodniu nie dokładaj więcej.`;
+  else if (wNow && wPrev && wNow - wPrev > 0.6) tip = 'Waga w górę mimo treningów — często to woda po mocniejszych dniach lub słonym jedzeniu. Patrz na trend z kilku tygodni.';
+  else tip = 'Dobry tydzień. Trzymaj ten rytm — postęp robi regularność.';
+  return { from, runs: runs.length, strength: str.length, km, prevKm, time, easy, wNow, wPrev, plan, tip };
+}
+
+// ── CEL WAGI / PASA ────────────────────────────────────────────────────────
+export function goalForecast(entries, key, goal, now = Date.now()) {
+  const list = entries.filter(e => e[key] != null).sort((a, b) => a.ts - b.ts);
+  if (!goal || !list.length) return null;
+  const recent = key === 'weight' ? list.filter(e => e.ts >= now - 35 * DAY) : list;
+  const pts = recent.map(e => ({ ts: e.ts, v: e[key] }));
+  const slope = slopePerWeek(pts);
+  const curVal = key === 'weight' ? mean(list.filter(e => e.ts >= list[list.length - 1].ts - 7 * DAY).map(e => e[key])) : list[list.length - 1][key];
+  const left = curVal - goal;
+  const first = list[0][key];
+  const progress = first !== goal ? Math.max(0, Math.min(1, (first - curVal) / (first - goal))) : 1;
+  if (left <= 0) return { cur: curVal, goal, left: 0, progress: 1, done: true, text: 'Cel osiągnięty 🎉' };
+  if (slope == null || pts.length < 3 || slope >= -0.05) return { cur: curVal, goal, left, progress, eta: null, text: pts.length < 3 ? 'Za mało pomiarów na prognozę.' : 'Trend płaski — prognoza pojawi się, gdy wartość zacznie spadać.' };
+  const weeks = left / -slope;
+  const eta = now + weeks * 7 * DAY;
+  return { cur: curVal, goal, left, progress, slope, eta, weeks, text: `Przy obecnym tempie (${r1(-slope)} ${key === 'weight' ? 'kg' : 'cm'}/tydz.) cel ok. ${new Date(eta).toLocaleDateString('pl', { day: 'numeric', month: 'long', year: weeks > 40 ? 'numeric' : undefined })}.` };
+}
+
+// ── TECHNIKA BIEGU ─────────────────────────────────────────────────────────
+export const TECH = {
+  cadence: { label: 'Kadencja', unit: 'kr/min', better: 'up', fmt: v => Math.round(v) },
+  stepLen: { label: 'Długość kroku', unit: 'cm', better: null, fmt: v => Math.round(v / 10), scale: 0.1 },
+  gct: { label: 'Kontakt z podłożem', unit: 'ms', better: 'down', fmt: v => Math.round(v) },
+  vo: { label: 'Oscylacja pionowa', unit: 'cm', better: 'down', fmt: v => (v / 10).toFixed(1).replace('.', ','), scale: 0.1 },
+  vr: { label: 'Współczynnik pionowy', unit: '%', better: 'down', fmt: v => v.toFixed(1).replace('.', ',') },
+  power: { label: 'Moc', unit: 'W', better: null, fmt: v => Math.round(v) },
+};
+export function techValue(a, k) { return k === 'cadence' ? a.cadence : a.tech?.[k] ?? null; }
+export function techniqueReport(acts, now = Date.now()) {
+  const runs = acts.filter(a => isRun(a) && (a.tech || a.cadence)).sort((a, b) => a.start - b.start);
+  if (runs.length < 2) return null;
+  const cur = runs.filter(a => a.start >= now - 28 * DAY), prev = runs.filter(a => a.start < now - 28 * DAY && a.start >= now - 90 * DAY);
+  const rows = Object.entries(TECH).map(([k, d]) => {
+    const c = cur.map(a => techValue(a, k)).filter(v => v != null), p = prev.map(a => techValue(a, k)).filter(v => v != null);
+    return { k, ...d, now: c.length ? mean(c) : null, prev: p.length ? mean(p) : null };
+  }).filter(r => r.now != null || r.prev != null);
+  const val = k => rows.find(r => r.k === k)?.now;
+  const tips = [];
+  const cad = val('cadence'), vr = val('vr'), gct = val('gct');
+  if (cad != null && cad < 160) tips.push(`Kadencja ${Math.round(cad)} kr/min jest niska. Spróbuj o 5% więcej kroków (ok. ${Math.round(cad * 1.05)}) przy tym samym tempie — krótszy krok mniej obciąża kolana i zmniejsza podskakiwanie.`);
+  else if (cad != null) tips.push(`Kadencja ${Math.round(cad)} kr/min — w dobrym zakresie.`);
+  if (vr != null) tips.push(vr > 10 ? `Współczynnik pionowy ${r1(vr)}% — sporo energii idzie w górę zamiast do przodu. Pomaga wyższa kadencja i lekkie pochylenie z kostek.` : vr > 8 ? `Współczynnik pionowy ${r1(vr)}% — przeciętnie; poniżej 8% to ekonomiczny krok.` : `Współczynnik pionowy ${r1(vr)}% — bardzo ekonomiczny krok.`);
+  if (gct != null) tips.push(gct > 300 ? `Kontakt z podłożem ${Math.round(gct)} ms jest długi — typowe przy wolnym biegu; skraca się z formą i przebieżkami.` : `Kontakt z podłożem ${Math.round(gct)} ms.`);
+  tips.push('Technika zależy od tempa: porównuj biegi o podobnej prędkości. Przy spokojnym biegu kadencja i krok są naturalnie mniejsze.');
+  return { rows, tips, series: runs.map(a => ({ id: a.id, start: a.start, pace: a.pace, ...Object.fromEntries(Object.keys(TECH).map(k => [k, techValue(a, k)])) })) };
+}
+
+// ── KIEDY BIEGASZ NAJLEPIEJ ────────────────────────────────────────────────
+export function bestConditions(acts) {
+  const rows = acts.filter(isRun).map(a => ({ a, e: efficiency(a) })).filter(x => x.e);
+  if (rows.length < 4) return null;
+  const all = mean(rows.map(x => x.e.ef));
+  const group = (fn, labels) => {
+    const m = new Map();
+    for (const x of rows) { const k = fn(x.a); if (k == null) continue; (m.get(k) || m.set(k, []).get(k)).push(x.e.ef); }
+    return labels.filter(([k]) => (m.get(k) || []).length >= 2).map(([k, l]) => ({ k, label: l, n: m.get(k).length, diff: (mean(m.get(k)) - all) / all * 100 }));
+  };
+  const time = group(a => { const h = new Date(a.start).getHours(); return h < 11 ? 'm' : h < 16 ? 'd' : 'e'; }, [['m', 'Rano (do 11)'], ['d', 'W dzień (11–16)'], ['e', 'Wieczorem (od 16)']]);
+  const temp = group(a => a.weather?.t == null ? null : a.weather.t < 5 ? 'c' : a.weather.t < 15 ? 'm' : a.weather.t < 22 ? 'w' : 'h', [['c', 'Zimno (< 5°C)'], ['m', 'Chłodno (5–15°C)'], ['w', 'Ciepło (15–22°C)'], ['h', 'Gorąco (> 22°C)']]);
+  const coffee = group(a => a.note?.coffee === true ? 'y' : a.note?.coffee === false ? 'n' : null, [['y', 'Z kawą'], ['n', 'Bez kawy']]);
+  const sleep = group(a => a.note?.sleep || null, [['bad', 'Po słabym śnie'], ['ok', 'Po zwykłym śnie'], ['good', 'Po dobrym śnie']]);
+  return { time, temp, coffee, sleep, n: rows.length };
+}
+
+// ── TRASY ──────────────────────────────────────────────────────────────────
+function routeDist(r1p, r2p) {
+  // średnia odległość punktów trasy 1 od najbliższego punktu trasy 2 (metry)
+  const step = Math.max(1, Math.floor(r1p.length / 25));
+  let sum = 0, n = 0;
+  for (let i = 0; i < r1p.length; i += step) {
+    let best = Infinity;
+    for (const q of r2p) { const d = haversine(r1p[i][0], r1p[i][1], q[0], q[1]); if (d < best) best = d; }
+    sum += best; n++;
+  }
+  return n ? sum / n : Infinity;
+}
+export function findRoutes(acts, names = {}) {
+  const runs = acts.filter(a => isRun(a) && a.route && a.route.length > 3).sort((a, b) => a.start - b.start);
+  const clusters = [];
+  for (const a of runs) {
+    let hit = null;
+    for (const c of clusters) {
+      const ref = c.ref;
+      if (Math.abs(ref.distance - a.distance) > ref.distance * 0.12) continue;
+      if (haversine(ref.route[0][0], ref.route[0][1], a.route[0][0], a.route[0][1]) > 300) continue;
+      if (routeDist(a.route, ref.route) < 90 && routeDist(ref.route, a.route) < 90) { hit = c; break; }
+    }
+    if (hit) hit.runs.push(a); else clusters.push({ id: 'rt' + a.id, ref: a, runs: [a] });
+  }
+  return clusters.filter(c => c.runs.length >= 2).map((c, i) => {
+    const byTime = [...c.runs].sort((x, y) => x.timer / x.distance - y.timer / y.distance);
+    const dist = median(c.runs.map(x => x.distance));
+    return { id: c.id, name: names[c.id] || `Trasa ${String.fromCharCode(65 + i)} · ${fmtKm(dist, 1)} km`, distance: dist, route: c.ref.route, runs: c.runs, best: byTime[0], ranking: byTime, last: c.runs[c.runs.length - 1] };
+  }).sort((a, b) => b.runs.length - a.runs.length);
+}
+// porównanie km po km z najlepszym przejściem trasy
+export function routeCompare(run, best) {
+  const n = Math.min(run.splits?.length || 0, best.splits?.length || 0);
+  let acc = 0;
+  const rows = [];
+  for (let i = 0; i < n; i++) { const d = run.splits[i].time - best.splits[i].time; acc += d; rows.push({ km: i + 1, d, acc }); }
+  return rows;
+}
+
+// ── ODZNAKI I WYZWANIA ─────────────────────────────────────────────────────
+export function badges(acts, body, s, planSched = null) {
+  const runs = acts.filter(isRun).sort((a, b) => a.start - b.start);
+  const at = (pred) => { for (const a of runs) if (pred(a)) return a.start; return null; };
+  const cumAt = km => { let c = 0; for (const a of runs) { c += a.distance / 1000; if (c >= km) return a.start; } return null; };
+  const nth = n => runs[n - 1]?.start ?? null;
+  const totalKm = runs.reduce((x, a) => x + a.distance / 1000, 0);
+  const streak = weekStreak(acts);
+  const bodyL = [...body].sort((a, b) => a.ts - b.ts);
+  const wDrop = bodyL.length ? bodyL[0].weight - Math.min(...bodyL.map(e => e.weight)) : 0;
+  const waists = bodyL.filter(e => e.waist != null);
+  const waistDrop = waists.length ? waists[0].waist - Math.min(...waists.map(e => e.waist)) : 0;
+  const pr5 = recordProgression(acts, 5000).length;
+  const okPlan = planSched ? planSched.sessions.filter(x => x.status === 'done' && x.comp?.ok).length : 0;
+  const B = [
+    ['first', '🏁', 'Pierwszy bieg', 'Pierwszy bieg w Przebiegu', nth(1), `${runs.length}/1`],
+    ['r10', '🔟', '10 biegów', '10 biegów', nth(10), `${runs.length}/10`],
+    ['r25', '🎽', '25 biegów', '25 biegów', nth(25), `${runs.length}/25`],
+    ['r50', '🏅', '50 biegów', '50 biegów', nth(50), `${runs.length}/50`],
+    ['r100', '💯', '100 biegów', '100 biegów', nth(100), `${runs.length}/100`],
+    ['d5', '5️⃣', 'Pierwsze 5 km', 'Jeden bieg ≥ 5 km', at(a => a.distance >= 5000), null],
+    ['d10', '🔥', 'Pierwsze 10 km', 'Jeden bieg ≥ 10 km', at(a => a.distance >= 10000), null],
+    ['d21', '🦾', 'Półmaraton', 'Jeden bieg ≥ 21,1 km', at(a => a.distance >= 21097), null],
+    ['k50', '🛣️', '50 km łącznie', 'Suma kilometrów', cumAt(50), `${Math.round(totalKm)}/50 km`],
+    ['k100', '🗺️', '100 km łącznie', 'Suma kilometrów', cumAt(100), `${Math.round(totalKm)}/100 km`],
+    ['k250', '🌍', '250 km łącznie', 'Suma kilometrów', cumAt(250), `${Math.round(totalKm)}/250 km`],
+    ['k500', '🚀', '500 km łącznie', 'Suma kilometrów', cumAt(500), `${Math.round(totalKm)}/500 km`],
+    ['s4', '📅', '4 tygodnie z rzędu', 'Co najmniej 1 bieg w każdym tygodniu', streak >= 4 ? Date.now() : null, `${streak}/4 tyg.`],
+    ['s12', '🗓️', '12 tygodni z rzędu', 'Co najmniej 1 bieg w każdym tygodniu', streak >= 12 ? Date.now() : null, `${streak}/12 tyg.`],
+    ['early', '🌅', 'Ranny ptaszek', 'Bieg przed 7:00', at(a => new Date(a.start).getHours() < 7), null],
+    ['night', '🌙', 'Nocny marek', 'Bieg po 21:00', at(a => new Date(a.start).getHours() >= 21), null],
+    ['frost', '🥶', 'Mróz niestraszny', 'Bieg przy 0°C lub mniej', at(a => a.weather?.t != null && a.weather.t <= 0), null],
+    ['heat', '🥵', 'Upał', 'Bieg przy 25°C lub więcej', at(a => a.weather?.t != null && a.weather.t >= 25), null],
+    ['wind', '🌬️', 'Pod wiatr', 'Bieg przy wietrze ≥ 30 km/h', at(a => a.weather?.wind != null && a.weather.wind >= 30), null],
+    ['pr3', '🏆', 'Seria rekordów', '3 razy poprawiony rekord 5 km', pr5 >= 3 ? Date.now() : null, `${pr5}/3`],
+    ['plan10', '✅', 'Zgodnie z planem', '10 treningów zgodnych z planem', okPlan >= 10 ? Date.now() : null, `${okPlan}/10`],
+    ['kg3', '⚖️', 'Minus 3 kg', 'Od pierwszego pomiaru', wDrop >= 3 ? Date.now() : null, bodyL.length ? `${r1(Math.max(0, wDrop))}/3 kg` : 'brak pomiarów'],
+    ['waist5', '📏', 'Minus 5 cm w pasie', 'Od pierwszego pomiaru pasa', waistDrop >= 5 ? Date.now() : null, waists.length ? `${r1(Math.max(0, waistDrop))}/5 cm` : 'brak pomiarów'],
+  ];
+  return B.map(([id, icon, name, desc, date, prog]) => ({ id, icon, name, desc, earned: date != null, date, prog }));
+}
+export function monthChallenges(acts, s, now = Date.now()) {
+  const d = new Date(now), from = new Date(d.getFullYear(), d.getMonth(), 1).getTime(), to = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+  const runs = acts.filter(a => isRun(a) && a.start >= from && a.start < to);
+  const km = runs.reduce((x, a) => x + a.distance / 1000, 0);
+  const prevKm = [1, 2].map(k => acts.filter(a => isRun(a) && a.start >= new Date(d.getFullYear(), d.getMonth() - k, 1).getTime() && a.start < new Date(d.getFullYear(), d.getMonth() - k + 1, 1).getTime()).reduce((x, a) => x + a.distance / 1000, 0));
+  const kmTarget = Math.max(20, Math.ceil(Math.max(...prevKm, 0) * 1.1 / 5) * 5);
+  const split = intensitySplit(acts, s, from, to), tot = split[0] + split[1] + split[2];
+  const easy = tot ? split[0] / tot : 0;
+  const long = runs.filter(a => a.timer >= 60 * 60).length;
+  const daysLeft = Math.ceil((to - now) / DAY);
+  return { daysLeft, items: [
+    { icon: '🛣️', name: `${kmTarget} km w miesiącu`, cur: km, target: kmTarget, text: `${r1(km)} / ${kmTarget} km` },
+    { icon: '🐢', name: '80% czasu łatwo', cur: easy, target: 0.8, text: `${pct(easy)} / 80%` },
+    { icon: '⏱️', name: '2 biegi powyżej godziny', cur: long, target: 2, text: `${long} / 2` },
+    { icon: '📆', name: '12 biegów', cur: runs.length, target: 12, text: `${runs.length} / 12` },
+  ] };
+}
+
+// ── BUTY ───────────────────────────────────────────────────────────────────
+export function shoeStats(acts, s) {
+  return (s.shoes || []).map(sh => {
+    const runs = acts.filter(a => isRun(a) && a.shoe === sh.id);
+    const km = (sh.startKm || 0) + runs.reduce((x, a) => x + a.distance / 1000, 0);
+    const limit = sh.limit || 700;
+    return { ...sh, km, runs: runs.length, limit, ratio: km / limit, warn: km >= limit * 0.9 };
+  });
 }

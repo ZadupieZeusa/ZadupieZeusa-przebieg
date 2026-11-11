@@ -10,6 +10,7 @@ Dziennik biegowy w stylu Endomondo. Wgrywasz pliki FIT z zegarka, a aplikacja li
 | `app.js` | Interfejs, logowanie Google, synchronizacja z Dyskiem, import, pogoda |
 | `core.js` | Odczyt FIT, rekordy, międzyczasy, VDOT, statystyki |
 | `analysis.js` | Strefy tętna, obciążenie, raporty treningów i kondycji, skład ciała |
+| `plan.js` | Generator planu z historii, plan ze stałymi dniami i nadrabianiem opuszczonych treningów |
 | `vendor.js` | Biblioteki: dekoder FIT Garmina i rozpakowywanie ZIP |
 
 ## Wdrożenie
@@ -55,6 +56,29 @@ Przebieg/
 - **Ciało:** pomiary ręczne albo CSV z eksportu Zepp (`timestamp, weight, fatRate, muscleRate…`), średnia 7-dniowa, trend, masa tłuszczu i beztłuszczowa, obwód pasa.
 - **Pogoda:** Open-Meteo, bez klucza, pobierana dla treningów z GPS.
 - **Mapa:** OpenStreetMap, bez klucza API.
-- **Ustawienia:** próg mleczanowy (domyślnie 163), tempo progu, tętno spoczynkowe i maksymalne, wzrost.
+- **Ustawienia:** próg mleczanowy (domyślnie 164 przy 6:56/km), tempo progu, tętno spoczynkowe i maksymalne, wzrost.
 
 Po wgraniu nowej wersji aplikacja zaproponuje jednorazowe przeliczenie treningów z oryginałów FIT. Bez tego stare treningi nie mają stref ani raportu.
+
+## Plan treningowy
+
+- **Cel:** „Kondycja i mniej brzucha”, 12 tygodni, 2–4 stałe dni w tygodniu (domyślnie wt · czw · nd).
+- **Tydzień:** łatwy bieg, akcent (przebieżki, interwały progowe, fartlek) i długi bieg od 40 do 80 minut. Co 4. tydzień jest lżejszy, a na koniec jest sprawdzian 5 km.
+- **Opuszczony trening:** przesuwa się tylko on. Można go nadrobić do dnia przed kolejnym treningiem z planu, a jeśli się nie uda, przepada. Reszta planu zostaje na swoich dniach.
+- **Odhaczanie:** wgrany bieg FIT odhacza trening sam i dostaje ocenę zgodności (tętno, czas). Ręcznie służą do tego przyciski „Zrobione bez zegarka”, „Jutro” i „Pomiń”.
+- **Gdzie żyje plan:** tylko w aplikacji, synchronizowany przez `baza.json` na Dysku, bez Kalendarza Google.
+
+## Wersja 3
+
+- **Generator planu:** cel (kondycja, 5 km, 10 km, półmaraton), wynik docelowy lub data zawodów, stałe dni, dzień długiego biegu, limit czasu w pozostałe dni i opcja „nie lubię interwałów”. Startuje z Twoich ostatnich 8 tygodni (objętość, najdłuższy bieg, forma, ile biegasz łatwo) i ocenia, czy cel jest realny. Tempa liczy z Twoich danych: łatwe z biegów w strefie 2, próg z ustawień.
+- **Siła:** zakładka w Treningach dla treningów siłowych z plików FIT. Każdą aktywność można ręcznie oznaczyć jako siłową.
+- **Auto-próg:** po równym, mocnym biegu aplikacja podpowiada wyższy próg mleczanowy.
+- **Podsumowanie tygodnia** na Pulpicie (w niedzielę bieżący tydzień, w pn–śr poprzedni).
+- **Cele:** waga i obwód pasa z prognozą daty osiągnięcia.
+- **Technika:** kadencja, długość kroku, kontakt z podłożem, oscylacja, współczynnik pionowy i moc z zegarka, ze wskazówkami.
+- **Trasy:** wykrywanie stałych pętli, ranking i porównanie km po km z najlepszym przebiegnięciem.
+- **Kiedy biegasz najlepiej:** pora dnia, pogoda, kawa i sen.
+- **Odznaki** i wyzwania miesięczne.
+- **Buty:** licznik kilometrów, domyślna para dla nowych biegów, ostrzeżenie przy limicie.
+
+Po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów (silnik v3, bo dochodzi technika biegu).

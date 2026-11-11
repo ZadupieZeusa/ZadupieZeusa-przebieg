@@ -1,6 +1,7 @@
 // Przebieg — interfejs, synchronizacja z Dyskiem Google, import, widoki.
 import * as C from './core.js';
 import * as A from './analysis.js';
+import * as P from './plan.js';
 
 // ══ KONFIGURACJA ════════════════════════════════════════════════════════════
 // Ten sam klient OAuth co FotoPlaner (autoryzowany adres: zadupiezeusa.github.io).
@@ -29,6 +30,7 @@ const ICON = {
   home: '<path d="M3.5 10.5L12 4l8.5 6.5V19a1 1 0 0 1-1 1H15v-5.5H9V20H4.5a1 1 0 0 1-1-1z"/>',
   runs: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
   trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  plan: '<rect x="3.5" y="4.5" width="17" height="16" rx="3"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4"/><path d="M8.5 14.5l2.2 2.2 4.8-4.8"/>',
   body: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 10.5a4 4 0 0 1 8 0"/><path d="M12 10.5l1.6-2.2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   fit: '<path d="M13 4l-2 6h5l-6 10 2-7H7z"/>',
@@ -39,6 +41,7 @@ const ICON = {
 const icon = (k, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24">${ICON[k]}</svg>`;
 const VIEWS = [
   { key: 'home', label: 'Pulpit', icon: 'home' },
+  { key: 'plan', label: 'Plan', icon: 'plan' },
   { key: 'list', label: 'Treningi', icon: 'runs' },
   { key: 'progress', label: 'Postęp', icon: 'trend' },
   { key: 'body', label: 'Ciało', icon: 'body' },
@@ -46,9 +49,9 @@ const VIEWS = [
 
 // ══ STAN ════════════════════════════════════════════════════════════════════
 let db = emptyDb();
-let view = 'home', listFilter = 'run', progressTab = 'condition', bodyMetric = 'weight';
+let view = 'home', listFilter = 'run', listMode = 'run', progressTab = 'condition', bodyMetric = 'weight', techMetric = 'cadence', openRoute = null;
 let pendingFiles = null;
-function emptyDb() { return { version: 2, activities: [], deleted: [], body: [], bodyDeleted: [], settings: { ...A.DEFAULT_SETTINGS, updated: 0 }, savedAt: 0 }; }
+function emptyDb() { return { version: 2, activities: [], deleted: [], body: [], bodyDeleted: [], settings: { ...A.DEFAULT_SETTINGS, updated: 0 }, plan: null, savedAt: 0 }; }
 function normalizeDb(d) {
   const e = emptyDb();
   return { ...e, ...d, body: d.body || [], bodyDeleted: d.bodyDeleted || [], settings: { ...A.DEFAULT_SETTINGS, ...(d.settings || {}) } };
@@ -290,10 +293,11 @@ function mergeDb(a, b) {
     body: mergeList(a.body, b.body, bDel).sort((x, y) => x.ts - y.ts),
     bodyDeleted: [...bDel],
     settings: (b.settings.updated || 0) > (a.settings.updated || 0) ? b.settings : a.settings,
+    plan: ((b.plan?.updated || 0) > (a.plan?.updated || 0) ? b.plan : a.plan) || null,
     savedAt: Math.max(a.savedAt || 0, b.savedAt || 0),
   };
 }
-const sig = d => { d = normalizeDb(d); return JSON.stringify([d.activities.map(a => a.id + ':' + (a.updated || 0)).sort(), [...d.deleted].sort(), d.body.map(x => x.id + ':' + (x.updated || 0)).sort(), [...d.bodyDeleted].sort(), d.settings.updated || 0]); };
+const sig = d => { d = normalizeDb(d); return JSON.stringify([d.activities.map(a => a.id + ':' + (a.updated || 0)).sort(), [...d.deleted].sort(), d.body.map(x => x.id + ':' + (x.updated || 0)).sort(), [...d.bodyDeleted].sort(), d.settings.updated || 0, d.plan?.updated || 0]); };
 let syncing = null;
 async function sync({ quiet = true } = {}) {
   if (syncing) return syncing;
@@ -376,6 +380,7 @@ async function importFiles(fileList) {
       const rawName = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}_${summary.sport}.fit`;
       summary.fileId = await uploadRaw(rawName, it.buf, summary.id);
       summary.fileName = it.name;
+      if (C.isRun(summary) && S().defaultShoe) summary.shoe = S().defaultShoe;
       summary.updated = Date.now();
       db.activities.push(summary);
       await idb.put('streams', summary.id, streams);
@@ -443,7 +448,7 @@ async function getStreams(a) {
   if ((a.engine || 0) < C.ENGINE_VERSION) { Object.assign(a, built.summary, keepFields(a)); a.updated = Date.now(); changed(); }
   return s;
 }
-const keepFields = a => ({ id: a.id, fileId: a.fileId, fileName: a.fileName, title: a.title, note: a.note, weather: a.weather, shoe: a.shoe });
+const keepFields = a => ({ id: a.id, fileId: a.fileId, fileName: a.fileName, title: a.title, note: a.note, weather: a.weather, shoe: a.shoe, kind: a.kind });
 async function recomputeAll() {
   if (!await ensureToken(true)) { toast('Najpierw połącz się z Google', true); return; }
   const list = acts().filter(a => a.fileId);
@@ -506,12 +511,13 @@ async function fetchWeather(a) {
 // ══ ELEMENTY WSPÓLNE ════════════════════════════════════════════════════════
 function activityTitle(a) {
   if (a.title) return a.title;
+  if (C.isStrength(a)) return 'Trening siłowy';
   if (a._type && A.TYPES[a._type] && a._type !== 'other') return A.TYPES[a._type].label;
   const h = new Date(a.start).getHours();
   const pora = h < 5 ? 'nocny' : h < 11 ? 'poranny' : h < 17 ? 'popołudniowy' : h < 22 ? 'wieczorny' : 'nocny';
   return C.isRun(a) ? `Bieg ${pora}` : (SPORT_PL[a.sport] || a.sport);
 }
-const typePill = a => { const t = A.TYPES[a._type] || A.TYPES.other; return `<span class="pill ${t.tone}"><i></i>${esc(t.label)}</span>`; };
+const typePill = a => { if (C.isStrength(a)) return `<span class="pill mid"><i></i>Trening siłowy</span>`; const t = A.TYPES[a._type] || A.TYPES.other; return `<span class="pill ${t.tone}"><i></i>${esc(t.label)}</span>`; };
 const speedOrPace = a => C.isRun(a) ? { v: C.fmtPace(a.pace), u: '/km' } : { v: a.timer ? (a.distance / a.timer * 3.6).toFixed(1).replace('.', ',') : '–', u: 'km/h' };
 function routeThumb(route, size = 58) {
   if (!route || route.length < 2) return `<svg class="thumb" viewBox="0 0 58 58"><path d="M20 38l8-11 6 6 7-9" stroke="#555" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>`;
@@ -544,7 +550,8 @@ function renderHome() {
   const now = Date.now(), s = S();
   const runs = acts().filter(C.isRun);
   const last = runs[0];
-  let html = `<div class="card next"><div class="ic">${icon('spark')}</div><div><div class="t">Następny krok</div><p>${esc(A.nextStep(null, acts(), s, now))}</p></div></div>`;
+  let html = activePlan() ? todayCardHtml(true) : `<div class="card next"><div class="ic">${icon('spark')}</div><div><div class="t">Następny krok</div><p>${esc(A.nextStep(null, acts(), s, now))}</p></div></div>`;
+  html += homeExtrasHtml(now);
   if (last) {
     const rep = A.workoutReport(last, acts(), s);
     const sp = speedOrPace(last);
@@ -586,6 +593,8 @@ function renderHome() {
   el.innerHTML = html;
   el.querySelectorAll('[data-id]').forEach(x => x.onclick = () => openDetail(x.dataset.id));
   el.querySelectorAll('[data-go]').forEach(x => x.onclick = e => { e.stopPropagation(); setView(x.dataset.go); });
+  bindTodayCard(el);
+  bindHomeExtras(el);
 }
 // lower=true → spadek wartości jest dobry (tempo, waga)
 function deltaHtml(v, unit, positiveGood = true, lowerGood = false) {
@@ -618,12 +627,15 @@ function renderList() {
   const el = $('#view-list');
   if (!acts().length) { el.innerHTML = welcomeHtml(); bindWelcome(el); return; }
   ensureTypes();
+  const strN = acts().filter(C.isStrength).length;
+  let html = `<div class="seg">${[['run', 'Bieganie'], ['strength', `Siła${strN ? ' (' + strN + ')' : ''}`]].map(([k, l]) => `<button class="${listMode === k ? 'active' : ''}" data-lm="${k}">${l}</button>`).join('')}</div>`;
+  if (listMode === 'strength') { el.innerHTML = html + strengthHtml(); bindList(el); return; }
   const runs = acts().filter(C.isRun);
-  const others = acts().length - runs.length;
-  let html = `<div class="chips" style="margin:6px 0 4px">
+  const others = acts().filter(a => !C.isRun(a) && !C.isStrength(a)).length;
+  html += `<div class="chips" style="margin:10px 0 4px">
     ${[['run', `Biegi (${runs.length})`], ['easy', 'Łatwe'], ['hard', 'Mocne'], ...(others ? [['all', `Wszystko (${acts().length})`]] : [])].map(([k, l]) => `<button class="chip ${listFilter === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>`;
   const tone = a => (A.TYPES[a._type] || A.TYPES.other).tone;
-  const list = listFilter === 'all' ? acts() : listFilter === 'easy' ? runs.filter(a => tone(a) === 'easy') : listFilter === 'hard' ? runs.filter(a => tone(a) !== 'easy') : runs;
+  const list = listFilter === 'all' ? acts().filter(a => !C.isStrength(a)) : listFilter === 'easy' ? runs.filter(a => tone(a) === 'easy') : listFilter === 'hard' ? runs.filter(a => tone(a) !== 'easy') : runs;
   const marks = prMarks();
   let curM = null;
   for (const a of list) {
@@ -643,8 +655,36 @@ function renderList() {
   }
   if (!list.length) html += `<div class="empty">Brak treningów w tym filtrze.</div>`;
   el.innerHTML = html;
-  el.querySelectorAll('.chip').forEach(c => c.onclick = () => { listFilter = c.dataset.f; renderList(); });
+  bindList(el);
+}
+function bindList(el) {
+  el.querySelectorAll('[data-lm]').forEach(b => b.onclick = () => { listMode = b.dataset.lm; renderList(); });
+  el.querySelectorAll('.chip[data-f]').forEach(c => c.onclick = () => { listFilter = c.dataset.f; renderList(); });
   el.querySelectorAll('.act').forEach(c => c.onclick = () => openDetail(c.dataset.id));
+}
+function strengthHtml() {
+  const list = acts().filter(C.isStrength).sort((a, b) => b.start - a.start);
+  if (!list.length) return `<div class="empty">Tu pojawią się treningi siłowe z zegarka.<br>W Zepp: trening siłowy → Eksportuj → FIT, a potem „+” → Trening z zegarka.<br><br><span class="small">Jeśli trening siłowy trafił do biegów lub „Inne”, otwórz go i oznacz jako siłowy.</span></div>`;
+  const now = Date.now(), ws = C.weekStart(now);
+  const weeks = [];
+  for (let k = 7; k >= 0; k--) { const f = ws - k * 7 * DAY; const inW = list.filter(a => a.start >= f && a.start < f + 7 * DAY); weeks.push({ f, n: inW.length, min: inW.reduce((x, a) => x + a.timer / 60, 0) }); }
+  const thisW = weeks[weeks.length - 1], avgN = weeks.slice(0, -1).reduce((x, w) => x + w.n, 0) / 7;
+  const maxN = Math.max(1, ...weeks.map(w => w.n));
+  let html = `<div class="grid2" style="margin-top:10px">
+    <div class="card pad stat"><div class="lbl">Ten tydzień</div><div class="val num">${thisW.n}<small>${plural(thisW.n, 'trening', 'treningi', 'treningów')}</small></div><div class="sub">${Math.round(thisW.min)} min · śr. ${dec1(avgN)}/tydz.</div></div>
+    <div class="card pad stat"><div class="lbl">Ostatnie 8 tygodni</div><div class="week-bars" style="margin-top:6px">${weeks.map(w => `<div title="${fmtDateShort(w.f)}: ${w.n}"><b class="${w.n ? '' : 'zero'}" style="height:${w.n ? Math.max(12, w.n / maxN * 100) : 6}%;background:var(--t-mid)"></b><span>${new Date(w.f).getDate()}</span></div>`).join('')}</div></div>
+  </div>
+  <p class="muted small" style="margin:12px 4px 0;line-height:1.5">Siła 1–2× w tygodniu w dni bez biegu chroni mięśnie podczas redukcji i stawy przy rosnącym kilometrażu. Treningi siłowe liczą się do obciążenia (forma/zmęczenie).</p>`;
+  let curM = null;
+  for (const a of list) {
+    const d = new Date(a.start), key = d.getFullYear() * 12 + d.getMonth();
+    if (key !== curM) { curM = key; const inM = list.filter(x => { const xd = new Date(x.start); return xd.getFullYear() * 12 + xd.getMonth() === key; }); html += `<div class="month-h">${MONTHS[d.getMonth()]} ${d.getFullYear()}<span class="num">${inM.length}× · ${Math.round(inM.reduce((x, y) => x + y.timer / 60, 0))} min</span></div>`; }
+    html += `<div class="act" data-id="${a.id}"><svg class="thumb" viewBox="0 0 58 58"><path d="M17 29h24M14 23v12M44 23v12M19 25v8M39 25v8" stroke="#ffb347" stroke-width="3" stroke-linecap="round" fill="none"/></svg>
+      <div class="info"><div class="row1">${typePill(a)}${a.te ? `<span class="pill">TE ${dec1(a.te)}</span>` : ''}</div>
+      <div class="when">${DAYS[d.getDay()]}, ${fmtDate(a.start)} · ${fmtTime(a.start)}</div>
+      <div class="stats num"><span>${C.fmtDur(a.timer)}</span>${a.avgHr ? `<span>${a.avgHr}<small>bpm śr.</small></span>` : ''}${a.calories ? `<span>${a.calories}<small>kcal</small></span>` : ''}<span>${Math.round(A.trainingLoad(a, S()))}<small>pkt</small></span></div></div></div>`;
+  }
+  return html;
 }
 
 // ══ SZCZEGÓŁY TRENINGU ══════════════════════════════════════════════════════
@@ -668,6 +708,7 @@ async function openDetail(id) {
   $('#detail-title').innerHTML = `<b>${esc(activityTitle(a))}</b><span>${DAYS[d.getDay()]}, ${fmtDate(a.start)} · ${fmtTime(a.start)}${a.device ? ' · ' + esc(a.device) : ''}</span>`;
   $('#detail-body').scrollTop = 0;
   const run = C.isRun(a), sp = speedOrPace(a);
+  if (C.isStrength(a) || (!run && !a.hasGps && !(a.distance > 200))) { strengthDetail(a); return; }
   const allTime = C.recordTables(acts(), 1);
   const stats = [
     ['Dystans', C.fmtKm(a.distance), 'km'], ['Czas', C.fmtDur(a.timer), ''], [run ? 'Tempo' : 'Prędkość', sp.v, sp.u],
@@ -683,9 +724,11 @@ async function openDetail(id) {
   html += `<div class="sec">Wykresy</div><div class="hover-readout num" id="readout"><span class="muted">Dotknij wykresu, żeby zobaczyć szczegóły</span></div><div id="charts"><div class="card empty">Wczytuję dane…</div></div>`;
   html += `<div class="sec">Międzyczasy</div>${splitsHtml(a)}`;
   html += `<div class="sec">Jak było?</div><div class="card" id="note-slot"></div>`;
-  html += `<div style="display:flex;gap:8px;margin-top:22px;flex-wrap:wrap"><button class="btn" id="d-rename">✎ Zmień nazwę</button><button class="btn danger" id="d-del">Usuń trening</button></div>`;
+  if (run) html += `<div class="sec">Buty</div><div class="card pad" id="shoe-slot"></div>`;
+  html += `<div style="display:flex;gap:8px;margin-top:22px;flex-wrap:wrap"><button class="btn" id="d-rename">✎ Zmień nazwę</button>${!run ? '<button class="btn" id="d-kind">To trening siłowy</button>' : ''}<button class="btn danger" id="d-del">Usuń trening</button></div>`;
   $('#detail-inner').innerHTML = html;
-  renderReport(); renderNote();
+  renderReport(); renderNote(); renderShoePick();
+  $('#d-kind')?.addEventListener('click', () => { a.kind = 'strength'; a.updated = Date.now(); changed(); openDetail(a.id); renderView(); });
   $('#d-rename').onclick = () => renameActivity(a);
   $('#d-del').onclick = () => deleteActivity(a);
   $$('.effort-chip').forEach(b => b.onclick = () => toggleEffort(b));
@@ -711,6 +754,8 @@ function renderReport() {
   const rep = A.workoutReport(a, acts(), s);
   const zs = A.zonesFor(s.lthr);
   let html = `<div class="card report"><div class="report-head">${typePill(a)}<b>Raport treningu</b><span class="muted">analiza z Twoich stref</span></div>`;
+  const ps = activePlan() ? P.planSchedule(db.plan, acts(), s).sessions.find(x => x.runId === a.id) : null;
+  if (ps) html += `<div class="plan-line ${ps.comp.ok ? 'ok' : 'warn'}">${icon('plan')}<span><b>Plan, tydzień ${ps.week}:</b> ${esc(P.sessionInfo(ps, s, db.plan).title)} — ${esc(ps.comp.label)}</span></div>`;
   if (rep.facts.length) html += `<div class="facts">${rep.facts.map(f => `<span class="pill gold">${esc(f)}</span>`).join('')}</div>`;
   html += rep.paras.map(p => `<p>${esc(p)}</p>`).join('');
   html += `<div class="nextbox"><b>Co dalej:</b> ${esc(rep.next)}</div></div>`;
@@ -928,12 +973,17 @@ function renderProgress() {
   const el = $('#view-progress');
   if (!acts().filter(C.isRun).length) { el.innerHTML = `<div class="empty">Postęp pojawi się po wgraniu pierwszych biegów.</div>`; return; }
   ensureTypes();
-  let html = `<div class="seg">${[['condition', 'Kondycja'], ['records', 'Rekordy'], ['stats', 'Statystyki']].map(([k, l]) => `<button class="${progressTab === k ? 'active' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="prog-body"></div>`;
+  let html = `<div class="seg scroll">${[['condition', 'Kondycja'], ['records', 'Rekordy'], ['tech', 'Technika'], ['routes', 'Trasy'], ['badges', 'Odznaki'], ['stats', 'Statystyki']].map(([k, l]) => `<button class="${progressTab === k ? 'active' : ''}" data-t="${k}">${l}</button>`).join('')}</div><div id="prog-body"></div>`;
   el.innerHTML = html;
   el.querySelectorAll('.seg button').forEach(b => b.onclick = () => { progressTab = b.dataset.t; renderProgress(); });
-  if (progressTab === 'condition') renderCondition($('#prog-body'));
-  else if (progressTab === 'records') renderRecords($('#prog-body'));
-  else renderStats($('#prog-body'));
+  el.querySelector('.seg button.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  const pb = $('#prog-body');
+  if (progressTab === 'condition') renderCondition(pb);
+  else if (progressTab === 'records') renderRecords(pb);
+  else if (progressTab === 'tech') renderTechnique(pb);
+  else if (progressTab === 'routes') renderRoutes(pb);
+  else if (progressTab === 'badges') renderBadges(pb);
+  else renderStats(pb);
 }
 function renderCondition(el) {
   const s = S(), now = Date.now();
@@ -946,10 +996,7 @@ function renderCondition(el) {
     <div class="legend" style="padding:8px 4px 6px"><span><i style="background:#3b82f6;height:3px"></i>Forma (42 dni)</span><span><i style="background:#e8590c;height:3px"></i>Zmęczenie (7 dni)</span></div></div>`;
   html += `<div class="sec">Intensywność tygodniowo</div><div class="card chart-card"><div class="chart-head"><b>Minuty w strefach</b><span>cel: ok. 80% łatwo</span></div><div class="chart-box" style="height:170px"><canvas id="ch-int"></canvas></div>
     <div class="legend" style="padding:8px 4px 6px"><span><i style="background:var(--z2)"></i>Łatwo</span><span><i style="background:var(--z3)"></i>Próg</span><span><i style="background:var(--z5)"></i>Powyżej progu</span></div></div>`;
-  const cof = A.coffeeEffect(acts());
-  html += `<div class="sec">Kawa a tętno</div><div class="card pad"><p style="font-size:14px;line-height:1.55">${cof.enough
-    ? `Z kawą (${cof.withC} biegów) średnie tętno ${cof.hrDiff >= 0 ? 'wyższe' : 'niższe'} o ${dec1(Math.abs(cof.hrDiff))} bpm, a wydajność (metry na uderzenie serca) ${cof.efDiff >= 0 ? 'lepsza' : 'gorsza'} o ${dec1(Math.abs(cof.efDiff))}% niż bez kawy (${cof.without}). ${Math.abs(cof.efDiff) < 3 ? 'Różnica w granicach normalnych wahań — kawa nie robi Ci wyraźnej różnicy.' : cof.efDiff < 0 ? 'Kawa wyraźnie podbija Ci tętno przy tym samym tempie.' : ''}`
-    : `Zaznaczaj w notatce po biegu, czy piłeś kawę. Po 3 biegach z kawą i 3 bez (masz ${cof.withC} i ${cof.without}) policzę, czy realnie zmienia Ci tętno.`}</p></div>`;
+  html += bestConditionsHtml();
   el.innerHTML = html;
   // wykres: tempo przy tętnie
   const pts = trend.points;
@@ -1176,6 +1223,7 @@ function renderBody() {
       <div class="card pad stat"><div class="lbl">Tłuszcz trzewny</div><div class="val num">${last.visceral != null ? Math.round(last.visceral) : '–'}</div><div class="sub">${last.visceral != null ? (last.visceral <= 9 ? 'norma (≤ 9)' : 'powyżej normy 9') : '&nbsp;'}</div></div>
       <div class="card pad stat"><div class="lbl">Trend wagi</div><div class="val num">${rep.slope != null ? (rep.slope > 0 ? '+' : '') + dec1(rep.slope) : '–'}<small>kg/tydz.</small></div><div class="sub">z 4 tygodni</div></div>
     </div>
+    ${goalsHtml(list)}
     <div class="sec">Analiza</div><div class="card"><ul class="lines">${rep.lines.map(l => `<li><span class="ic">•</span><span>${esc(l)}</span></li>`).join('')}</ul></div>
     <div class="sec">Wykres</div>
     <div class="chips" style="margin-bottom:8px">${BODY_METRICS.filter(m => list.some(e => e[m.k] != null)).map(m => `<button class="chip ${bodyMetric === m.k ? 'active' : ''}" data-bm="${m.k}">${m.l}</button>`).join('')}</div>
@@ -1183,6 +1231,7 @@ function renderBody() {
     <div class="sec">Historia</div><div class="card">${[...list].reverse().slice(0, 60).map(e => `<div class="entry" data-bid="${e.id}"><span class="dt">${fmtDate(e.ts)}</span><span class="w num">${dec1(e.weight)} kg</span><span class="rest">${[e.fat != null ? dec1(e.fat) + '% tł.' : '', e.muscle != null ? dec1(e.muscle) + ' kg mięśni' : '', e.waist != null ? 'pas ' + dec1(e.waist) + ' cm' : ''].filter(Boolean).join(' · ')}</span></div>`).join('')}</div>`;
   el.innerHTML = html;
   $('#b-add').onclick = () => bodyForm(); $('#b-imp').onclick = () => $('#file-input').click();
+  el.querySelectorAll('[data-goal]').forEach(b => b.onclick = goalsForm);
   el.querySelectorAll('[data-bm]').forEach(b => b.onclick = () => { bodyMetric = b.dataset.bm; renderBody(); });
   el.querySelectorAll('[data-bid]').forEach(r => r.onclick = () => bodyForm(db.body.find(x => x.id === r.dataset.bid)));
   if (!list.some(e => e[bodyMetric] != null)) bodyMetric = 'weight';
@@ -1233,6 +1282,342 @@ function bodyForm(e = null) {
   });
 }
 
+// ══ PLAN ════════════════════════════════════════════════════════════════════
+const activePlan = () => (db.plan && !db.plan.ended ? db.plan : null);
+const fmtDay = t => { const d = new Date(t); return `${P.DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`; };
+function relDay(t) {
+  const diff = Math.round((P.dayStart(t) - P.dayStart(Date.now())) / DAY);
+  return diff === 0 ? 'dziś' : diff === 1 ? 'jutro' : diff === 2 ? 'pojutrze' : fmtDay(t);
+}
+function todayCardHtml(compact = false) {
+  const sch = P.planSchedule(db.plan, acts(), S());
+  if (sch.finished) return `<div class="card next"><div class="ic">${icon('plan')}</div><div><div class="t">Plan ukończony 🎉</div><p>Wszystkie ${sch.total} treningów za Tobą. W zakładce Plan założysz kolejny.</p></div></div>`;
+  const n = sch.next, info = P.sessionInfo(n, S(), db.plan);
+  const isToday = n.status === 'today';
+  const when = n.status === 'overdue' ? `Zaległy z: ${fmtDay(n.planned)} · nadrób do ${relDay(n.deadline)}` : isToday ? (n.moved ? 'Dziś (przełożony)' : 'Dziś w planie') : `Następny: ${relDay(n.date)}${n.moved ? ' (przełożony)' : ''}`;
+  return `<div class="card today ${n.status === 'overdue' ? 'overdue' : ''}">
+    <div class="today-top"><span class="pill ${info.tone}"><i></i>${esc(when)}</span><span class="muted small">Tydzień ${n.week}/${P.planWeeks(db.plan)}${n.light ? ' · lżejszy' : ''}</span></div>
+    <h3>${esc(info.title)}</h3>
+    <ul class="steps">${info.steps.slice(0, compact ? 2 : 9).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    ${isToday || n.status === 'overdue' ? `<div class="today-actions"><button class="btn" data-pa="done">✓ Zrobione bez zegarka</button><button class="btn ghost" data-pa="tomorrow">Jutro</button><button class="btn ghost" data-pa="skip">Pomiń</button></div>` : ''}
+    ${compact ? `<a class="today-more" data-go="plan">Cały plan ›</a>` : ''}
+  </div>`;
+}
+function bindTodayCard(el) {
+  el.querySelectorAll('[data-pa]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const sch = P.planSchedule(db.plan, acts(), S()); const n = sch.next; if (!n) return;
+    const pl = db.plan;
+    if (b.dataset.pa === 'done') { pl.marks = { ...pl.marks, [n.id]: { s: 'done', ts: Date.now() } }; toast('✓ Odhaczone'); }
+    if (b.dataset.pa === 'skip') { if (!confirm('Pominąć ten trening? Pozostałe zostają na swoich dniach.')) return; pl.marks = { ...pl.marks, [n.id]: { s: 'skip', ts: Date.now() } }; }
+    if (b.dataset.pa === 'tomorrow') { pl.moves = { ...(pl.moves || {}), [n.id]: P.dayStart(Date.now()) + DAY + 3600e3 }; toast('Przełożone na jutro — reszta planu bez zmian'); }
+    pl.updated = Date.now(); changed(); renderView();
+  });
+  el.querySelectorAll('[data-go]').forEach(x => x.onclick = e => { e.stopPropagation(); setView(x.dataset.go); });
+}
+function renderPlan() {
+  const el = $('#view-plan');
+  if (!activePlan()) { planWizard(el); return; }
+  const s = S();
+  const sch = P.planSchedule(db.plan, acts(), s);
+  const pctDone = Math.round(sch.closed / sch.total * 100);
+  const missedN = sch.sessions.filter(x => x.status === 'missed').length;
+  let html = `<div class="card pad"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><b style="font-size:16px">${esc(P.planLabel(db.plan))}</b><span class="muted small">${db.plan.days.map(d => P.DAY_SHORT[d]).join(' · ')}</span></div>
+    <div class="progress" style="height:8px"><i style="width:${pctDone}%"></i></div>
+    <div class="muted small" style="margin-top:8px">Zrobione ${sch.done} z ${sch.total}${missedN ? ` · przepadło ${missedN}` : ''} · tydzień ${Math.min(sch.week, P.planWeeks(db.plan))} z ${P.planWeeks(db.plan)}</div>${planMetaHtml(db.plan)}</div>
+    <div class="sec">Najbliższy trening</div>${todayCardHtml(false)}`;
+  const upcoming = sch.open.slice(1, 8);
+  if (upcoming.length) html += `<div class="sec">Kolejne</div><div class="card">${upcoming.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<details class="pl-row"><summary><span class="pl-date">${esc(relDay(x.date))}</span><span class="pill ${i.tone}"><i></i>${esc(i.short)}</span><span class="pl-t">${esc(i.title)}</span></summary><ul class="steps">${i.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ul></details>`; }).join('')}</div>`;
+  const done = sch.sessions.filter(x => ['done', 'skipped', 'missed'].includes(x.status)).sort((a, b) => (b.at || b.planned) - (a.at || a.planned));
+  if (done.length) html += `<div class="sec">Zrobione</div><div class="card">${done.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<div class="pl-row done" ${x.runId ? `data-id="${x.runId}"` : ''}><span class="pl-date">${fmtDateShort(x.at || x.planned)}</span><span class="pl-t">${esc(i.title)}<small>${x.status === 'skipped' ? 'pominięty' : x.status === 'missed' ? 'przepadł — nie nadrobiony na czas' : esc((x.comp ? x.comp.label : 'oznaczony ręcznie') + (x.runId && P.dayStart(x.at) !== x.planned ? ` · nadrobiony (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : ''))}</small></span><span class="pl-st ${x.status !== 'done' ? 'skip' : x.comp && !x.comp.ok ? 'warn' : 'ok'}">${x.status !== 'done' ? '–' : x.comp && !x.comp.ok ? '!' : '✓'}</span></div>`; }).join('')}</div>`;
+  html += `<div class="sec">Jak działa plan</div><div class="card pad"><p class="muted" style="font-size:13.5px;line-height:1.6">Każdy trening ma swój stały dzień. Jeśli go opuścisz, przesuwa się <b>tylko ten jeden</b> — pokaże się jako <b>zaległy</b> i możesz go nadrobić do dnia przed kolejnym treningiem (np. czwartek → piątek lub sobota). Reszta planu zostaje na swoich dniach. Bieg z wgranego pliku FIT odhacza się sam i dostaje ocenę zgodności z planem; przycisk „Jutro” przekłada tylko bieżący trening.</p>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" id="pl-days">Dopasuj plan</button><button class="btn danger" id="pl-del">Zakończ plan</button></div></div>`;
+  el.innerHTML = html;
+  bindTodayCard(el);
+  el.querySelectorAll('.pl-row.done[data-id]').forEach(r => r.onclick = () => openDetail(r.dataset.id));
+  $('#pl-days').onclick = () => planWizard(null);
+  $('#pl-del').onclick = () => { if (!confirm('Zakończyć plan? Historia treningów zostaje.')) return; db.plan = { ...db.plan, ended: Date.now(), updated: Date.now() }; changed(); renderView(); };
+}
+// ══ PULPIT: DODATKI (próg, tydzień, buty) ═══════════════════════════════════
+function homeExtrasHtml(now) {
+  const s = S();
+  let html = '';
+  const lt = A.estimateThreshold(acts(), s, now);
+  if (lt) html += `<div class="card pad notice" style="margin-top:10px"><b>📈 Twój próg mógł wzrosnąć do ${lt.lthr} bpm</b>
+    <p class="muted small" style="margin-top:4px;line-height:1.5">W biegu z ${fmtDate(lt.start)} trzymałeś równe ${lt.lthr} bpm przez 20 minut (tempo ${C.fmtPace(lt.pace)}/km). Teraz masz ustawione ${s.lthr}. Sprawdź też w Zepp, co pokazuje zegarek.</p>
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-sm" data-lt="yes" data-v="${lt.lthr}" data-p="${lt.pace}" data-r="${lt.runId}">Zaktualizuj</button><button class="btn ghost" data-lt="no" data-r="${lt.runId}">Nie teraz</button></div></div>`;
+  const warn = A.shoeStats(acts(), s).filter(x => x.warn && !x.retired);
+  for (const sh of warn) html += `<div class="card pad notice" style="margin-top:10px"><b>👟 ${esc(sh.name)}: ${Math.round(sh.km)} km</b><p class="muted small" style="margin-top:4px">Zbliżasz się do limitu ${sh.limit} km — amortyzacja słabnie. Pomyśl o nowej parze.</p></div>`;
+  // podsumowanie tygodnia: w niedzielę bieżący, w pn–śr poprzedni
+  const wd = new Date(now).getDay();
+  if (wd === 0 || wd <= 3) {
+    const from = wd === 0 ? C.weekStart(now) : C.weekStart(now) - 7 * DAY;
+    const sch = activePlan() ? P.planSchedule(db.plan, acts(), s, now).sessions : null;
+    const w = A.weekSummary(acts(), db.body, s, from, sch);
+    const kmDelta = w.prevKm ? w.km - w.prevKm : null;
+    html += `<div class="sec">${wd === 0 ? 'Ten tydzień' : 'Poprzedni tydzień'} · ${fmtDateShort(from)}–${fmtDateShort(from + 6 * DAY)}</div>
+      <div class="card"><div class="week-sum">
+        <div><span>Bieganie</span><b class="num">${dec1(w.km)} km</b><small>${w.runs}× ${kmDelta != null ? deltaHtml(kmDelta, 'km') : ''}</small></div>
+        ${w.plan ? `<div><span>Plan</span><b class="num">${w.plan.done}/${w.plan.total}</b><small>${w.plan.ok} zgodnie</small></div>` : ''}
+        <div><span>Łatwo</span><b class="num">${w.easy != null ? Math.round(w.easy * 100) + '%' : '–'}</b><small>cel 80%</small></div>
+        <div><span>Siła</span><b class="num">${w.strength}×</b><small>&nbsp;</small></div>
+        ${w.wNow ? `<div><span>Waga śr.</span><b class="num">${dec1(w.wNow)}</b><small>${w.wPrev ? deltaHtml(w.wNow - w.wPrev, 'kg', false, true) : '&nbsp;'}</small></div>` : ''}
+      </div><p class="week-tip">${esc(w.tip)}</p></div>`;
+  }
+  return html;
+}
+function bindHomeExtras(el) {
+  el.querySelectorAll('[data-lt]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const s = S();
+    if (b.dataset.lt === 'yes') { const p = +b.dataset.p; db.settings = { ...s, lthr: +b.dataset.v, thrPace: p && p < s.thrPace ? p : s.thrPace, updated: Date.now() }; toast(`✅ Próg ${b.dataset.v} bpm — strefy przeliczone`); }
+    else db.settings = { ...s, ltDismissed: b.dataset.r, updated: Date.now() };
+    changed(); renderView();
+  });
+}
+
+// ══ SZCZEGÓŁY: TRENING SIŁOWY ═══════════════════════════════════════════════
+function strengthDetail(a) {
+  const s = S();
+  const zt = A.zoneTimes(a, s.lthr);
+  const stats = [['Czas', C.fmtDur(a.timer), ''], ['Tętno śr.', a.avgHr ?? '–', a.avgHr ? 'bpm' : ''], ['Tętno maks.', a.maxHr ?? '–', a.maxHr ? 'bpm' : ''],
+    ['Kalorie', a.calories ?? '–', a.calories ? 'kcal' : ''], ['Obciążenie', Math.round(A.trainingLoad(a, s)), 'pkt'], ['Training Effect', a.te != null ? dec1(a.te) : '–', '']];
+  const zs = A.zonesFor(s.lthr);
+  let html = `<div class="big-stats" style="grid-template-columns:repeat(3,1fr)">${stats.map(([l, v, u]) => `<div><div class="lbl">${l}</div><div class="val num">${v}<small>${u}</small></div></div>`).join('')}</div>`;
+  const isStr = C.isStrength(a);
+  html += `<div class="card report"><div class="report-head">${typePill(a)}<b>Podsumowanie</b></div><p>${isStr
+    ? `Trening siłowy ${Math.round(a.timer / 60)} min${a.avgHr ? `, średnie tętno ${a.avgHr} bpm` : ''}. ${a.avgHr && a.avgHr > zs[2].lo ? 'Sporo pracy w wysokich strefach — obwody lub krótkie przerwy.' : 'Spokojne tętno — klasyczna siła z przerwami między seriami.'} Najlepiej w dzień bez biegu albo po łatwym bieganiu; przed akcentem (progiem, interwałami) zostaw dzień przerwy.`
+    : `Aktywność bez trasy GPS. Jeśli to trening siłowy, oznacz go niżej — trafi do zakładki Siła.`}</p></div>`;
+  if (zt && zt.some(Boolean)) {
+    const tot = zt.reduce((x, y) => x + y, 0) || 1;
+    html += `<div class="sec">Czas w strefach tętna</div><div class="card"><div class="zone-rows">${zs.map((z, i) => ({ z, v: zt[i + 1], c: `var(--z${i + 1})` })).reverse().map(r => `<div class="zone-row"><div class="zn"><b>${r.z.short}</b><span class="zname">${esc(r.z.name)} · </span>${r.z.lo}–${r.z.hi}</div><div class="bar"><i style="width:${r.v / tot * 100}%;background:${r.c}"></i></div><div class="zt num">${C.fmtDur(r.v)}</div></div>`).join('')}</div></div>`;
+  }
+  html += `<div style="display:flex;gap:8px;margin-top:22px;flex-wrap:wrap"><button class="btn" id="d-rename">✎ Zmień nazwę</button><button class="btn" id="d-kind">${isStr ? 'To nie jest trening siłowy' : 'To trening siłowy'}</button><button class="btn danger" id="d-del">Usuń trening</button></div>`;
+  $('#detail-inner').innerHTML = html;
+  $('#d-rename').onclick = () => renameActivity(a);
+  $('#d-del').onclick = () => deleteActivity(a);
+  $('#d-kind').onclick = () => { a.kind = isStr ? 'other' : 'strength'; a.updated = Date.now(); changed(); openDetail(a.id); renderView(); };
+}
+function renderShoePick() {
+  const a = cur, slot = $('#shoe-slot'); if (!a || !slot) return;
+  const shoes = (S().shoes || []).filter(x => !x.retired || x.id === a.shoe);
+  if (!shoes.length) { slot.innerHTML = `<p class="muted small">Dodaj buty w Ustawieniach (suwaki u góry → Buty), żeby liczyć ich przebieg.</p>`; return; }
+  slot.innerHTML = `<div class="chips">${shoes.map(x => `<button class="chip ${a.shoe === x.id ? 'active' : ''}" data-shoe="${x.id}">${esc(x.name)}</button>`).join('')}<button class="chip ${!a.shoe ? 'active' : ''}" data-shoe="">bez przypisania</button></div>`;
+  slot.querySelectorAll('[data-shoe]').forEach(b => b.onclick = () => { a.shoe = b.dataset.shoe || null; a.updated = Date.now(); changed(); renderShoePick(); });
+}
+
+// ══ POSTĘP: KIEDY NAJLEPIEJ, TECHNIKA, TRASY, ODZNAKI ═══════════════════════
+function bestConditionsHtml() {
+  const bc = A.bestConditions(acts());
+  let html = `<div class="sec">Kiedy biegasz najlepiej</div><div class="card pad">`;
+  if (!bc) return html + `<p class="muted" style="font-size:14px;line-height:1.55">Potrzeba co najmniej 4 biegów z tętnem. Liczę metry przebiegnięte na jedno uderzenie serca — im więcej, tym lepsza forma tego dnia.</p></div>`;
+  const grp = (title, rows, empty) => `<div class="bc-group"><div class="bc-title">${title}</div>${rows.length ? rows.map(r => `<div class="bc-row"><span>${esc(r.label)} <small class="muted">(${r.n})</small></span><div class="bc-bar"><i style="${r.diff >= 0 ? 'left:50%' : `right:50%`};width:${Math.min(50, Math.abs(r.diff) * 5)}%;background:${r.diff >= 0 ? 'var(--accent)' : 'var(--warn)'}"></i></div><b class="num" style="color:${r.diff >= 0 ? 'var(--accent)' : 'var(--warn)'}">${r.diff >= 0 ? '+' : ''}${dec1(r.diff)}%</b></div>`).join('') : `<p class="muted small">${empty}</p>`}</div>`;
+  html += `<p class="muted small" style="line-height:1.5;margin-bottom:6px">Wydajność względem Twojej średniej: metry na uderzenie serca. Plus = przy tym samym wysiłku biegniesz szybciej.</p>`;
+  html += grp('Pora dnia', bc.time, 'Biegasz zwykle o jednej porze.');
+  html += grp('Pogoda', bc.temp, 'Pogoda dociąga się przy otwieraniu treningów z GPS.');
+  html += grp('Kawa przed biegiem', bc.coffee, 'Zaznaczaj kawę w notatce po biegu (min. 2 biegi z kawą i 2 bez).');
+  html += grp('Sen', bc.sleep, 'Zaznaczaj sen w notatce po biegu.');
+  return html + `</div>`;
+}
+function renderTechnique(el) {
+  const rep = A.techniqueReport(acts());
+  if (!rep) { el.innerHTML = `<div class="empty">Technika pojawi się po 2 biegach z danymi o kroku (kadencja, kontakt z podłożem).</div>`; return; }
+  const rows = rep.rows;
+  let html = `<div class="sec">Ostatnie 4 tygodnie vs wcześniej</div><div class="card"><table class="tbl num"><thead><tr><th>Wskaźnik</th><th class="r">Teraz</th><th class="r">Wcześniej</th><th class="r"></th></tr></thead><tbody>${rows.map(r => {
+    const d = r.now != null && r.prev != null ? r.now - r.prev : null;
+    const good = d == null || r.better == null || Math.abs(d) < 1e-9 ? null : (r.better === 'up' ? d > 0 : d < 0);
+    return `<tr class="click" data-tm="${r.k}"><td>${r.label} <small class="muted">${r.unit}</small></td><td class="r"><b>${r.now != null ? r.fmt(r.now) : '–'}</b></td><td class="r muted">${r.prev != null ? r.fmt(r.prev) : '–'}</td><td class="r">${good == null ? '' : good ? '<span class="delta up">▲</span>' : '<span class="delta down">▼</span>'}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+  html += `<div class="sec">Wykres</div><div class="chips" style="margin-bottom:8px">${rows.map(r => `<button class="chip ${techMetric === r.k ? 'active' : ''}" data-tm="${r.k}">${r.label}</button>`).join('')}</div>
+    <div class="card chart-card"><div class="chart-head"><b><i style="background:var(--c-pace)"></i>${esc(A.TECH[techMetric]?.label || '')}</b><span>każdy bieg osobno · kolor = tempo</span></div><div class="chart-box" style="height:190px"><canvas id="ch-tech"></canvas></div></div>`;
+  html += `<div class="sec">Wskazówki</div><div class="card"><ul class="lines">${rep.tips.map(t => `<li><span class="ic">👟</span><span>${esc(t)}</span></li>`).join('')}</ul></div>`;
+  el.innerHTML = html;
+  el.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => { techMetric = b.dataset.tm; renderProgress(); });
+  if (!rows.some(r => r.k === techMetric)) techMetric = rows[0].k;
+  const def = A.TECH[techMetric];
+  const pts = rep.series.filter(x => x[techMetric] != null);
+  const paces = pts.map(x => x.pace).filter(Boolean), pMin = Math.min(...paces), pMax = Math.max(...paces);
+  const col = p => { const t = pMax > pMin ? (pMax - p) / (pMax - pMin) : 0.5; return PACE_RAMP[Math.round(1 + t * 4)]; };
+  viewCharts.push(new Chart($('#ch-tech'), {
+    type: 'scatter',
+    data: { datasets: [{ data: pts.map(x => ({ x: x.start, y: x[techMetric] * (def.scale || 1) })), pointRadius: 5, pointHoverRadius: 7, pointBackgroundColor: pts.map(x => col(x.pace)), pointBorderColor: '#1c1c1e', pointBorderWidth: 1.5 }] },
+    options: chartBase({ parsing: false,
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#000e', displayColors: false, callbacks: { title: it => fmtDate(it[0].parsed.x), label: it => `${def.fmt(pts[it.dataIndex][techMetric])} ${def.unit} · tempo ${C.fmtPace(pts[it.dataIndex].pace)}/km` } } },
+      scales: { x: { type: 'linear', grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#7a7a80', font: { size: 10.5 }, maxTicksLimit: 6, callback: v => fmtDateShort(v) } },
+        y: { grid: { color: '#ffffff0d' }, border: { display: false }, ticks: { color: '#7a7a80', font: { size: 10.5 }, maxTicksLimit: 5 } } } }),
+  }));
+}
+function renderRoutes(el) {
+  const routes = A.findRoutes(acts(), S().routeNames || {});
+  if (!routes.length) { el.innerHTML = `<div class="empty">Trasy pojawią się, gdy przebiegniesz tę samą pętlę co najmniej 2 razy (start w tym samym miejscu, podobny przebieg i dystans).</div>`; return; }
+  let html = `<div class="sec">Twoje stałe trasy</div>`;
+  for (const r of routes) {
+    const open = openRoute === r.id;
+    html += `<div class="card route ${open ? 'open' : ''}" style="margin-bottom:10px"><div class="route-head" data-rt="${r.id}">${routeThumb(r.route)}
+      <div style="flex:1;min-width:0"><b>${esc(r.name)}</b><div class="muted small" style="margin-top:3px">${r.runs.length}× · najlepiej ${C.fmtDur(r.best.timer)} (${C.fmtPace(r.best.pace)}/km, ${fmtDateShort(r.best.start)})</div>
+      <div class="muted small">ostatnio ${C.fmtDur(r.last.timer)} · ${fmtDateShort(r.last.start)}</div></div><span class="chev">${open ? '▾' : '▸'}</span></div>`;
+    if (open) {
+      html += `<div class="route-body"><div class="bc-title" style="margin:4px 0 6px">Ranking (tempo)</div>${r.ranking.slice(0, 10).map((x, i) => `<div class="top-item num" data-id="${x.id}"><span class="n">${i + 1}.</span><span class="tm">${C.fmtDur(x.timer)}</span><span class="dt">${fmtDate(x.start)}</span><span class="muted">${C.fmtPace(x.pace)}${x.avgHr ? ' · ' + x.avgHr + ' bpm' : ''}</span></div>`).join('')}`;
+      if (r.last.id !== r.best.id) {
+        const cmp = A.routeCompare(r.last, r.best);
+        if (cmp.length) html += `<div class="bc-title" style="margin:14px 0 6px">Ostatni bieg vs najlepszy — km po km</div>${cmp.map(c => `<div class="bc-row"><span>km ${c.km}</span><div class="bc-bar"><i style="${c.d <= 0 ? 'left:50%' : 'right:50%'};width:${Math.min(50, Math.abs(c.d) / 2)}%;background:${c.d <= 0 ? 'var(--accent)' : 'var(--warn)'}"></i></div><b class="num" style="color:${c.d <= 0 ? 'var(--accent)' : 'var(--warn)'}">${c.d <= 0 ? '−' : '+'}${Math.abs(Math.round(c.d))} s</b></div>`).join('')}<p class="muted small" style="margin-top:6px">Na mecie: ${cmp[cmp.length - 1].acc <= 0 ? 'szybciej' : 'wolniej'} o ${C.fmtDur(Math.abs(cmp[cmp.length - 1].acc))}.</p>`;
+      } else html += `<p class="muted small" style="margin-top:10px">Ostatni bieg na tej trasie jest Twoim najlepszym 🏆</p>`;
+      html += `<button class="btn ghost" data-rname="${r.id}" style="margin-top:12px">✎ Nazwij trasę</button></div>`;
+    }
+    html += `</div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('[data-rt]').forEach(h => h.onclick = () => { openRoute = openRoute === h.dataset.rt ? null : h.dataset.rt; renderProgress(); });
+  el.querySelectorAll('.top-item[data-id]').forEach(x => x.onclick = () => openDetail(x.dataset.id));
+  el.querySelectorAll('[data-rname]').forEach(b => b.onclick = () => {
+    const r = routes.find(x => x.id === b.dataset.rname);
+    const t = prompt('Nazwa trasy:', r.name); if (t == null) return;
+    const names = { ...(S().routeNames || {}) }; if (t.trim()) names[r.id] = t.trim(); else delete names[r.id];
+    db.settings = { ...S(), routeNames: names, updated: Date.now() }; changed(); renderProgress();
+  });
+}
+function renderBadges(el) {
+  const sch = activePlan() ? P.planSchedule(db.plan, acts(), S()) : null;
+  const ch = A.monthChallenges(acts(), S());
+  const bs = A.badges(acts(), db.body, S(), sch);
+  const got = bs.filter(b => b.earned), todo = bs.filter(b => !b.earned);
+  let html = `<div class="sec">Wyzwania · ${MONTHS[new Date().getMonth()]}<span class="muted small">zostało ${ch.daysLeft} ${plural(ch.daysLeft, 'dzień', 'dni', 'dni')}</span></div><div class="card">${ch.items.map(i => {
+    const p = Math.min(1, i.cur / i.target);
+    return `<div class="chal"><span class="chal-ic">${i.icon}</span><div style="flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(i.name)}</b><span class="num muted small">${esc(i.text)}</span></div><div class="progress" style="margin-top:7px"><i style="width:${p * 100}%;${p >= 1 ? 'background:var(--gold)' : ''}"></i></div></div></div>`;
+  }).join('')}</div>`;
+  html += `<div class="sec">Zdobyte · ${got.length}/${bs.length}</div><div class="badges">${got.map(b => `<div class="badge"><span>${b.icon}</span><b>${esc(b.name)}</b><small>${b.date && b.date < Date.now() - 60e3 ? fmtDate(b.date) : esc(b.desc)}</small></div>`).join('') || '<p class="muted">Jeszcze nic — pierwszy bieg odblokuje pierwszą odznakę.</p>'}</div>`;
+  html += `<div class="sec">Do zdobycia</div><div class="badges">${todo.map(b => `<div class="badge locked"><span>${b.icon}</span><b>${esc(b.name)}</b><small>${esc(b.prog || b.desc)}</small></div>`).join('')}</div>`;
+  el.innerHTML = html;
+}
+
+// ══ CIAŁO: CELE ═════════════════════════════════════════════════════════════
+function goalsHtml(list) {
+  const g = S().goals || {};
+  if (!g.weight && !g.waist) return `<div class="card pad" style="margin-top:10px;display:flex;align-items:center;gap:12px"><span style="font-size:22px">🎯</span><div style="flex:1"><b>Ustaw cel</b><div class="muted small">waga lub obwód pasa — pokażę, kiedy go osiągniesz</div></div><button class="btn" data-goal>Ustaw</button></div>`;
+  const row = (k, unit, label) => {
+    if (!g[k]) return '';
+    const f = A.goalForecast(list, k, g[k]);
+    if (!f) return `<div class="goal"><div class="goal-top"><b>${label}: cel ${dec1(g[k])} ${unit}</b></div><p class="muted small">Brak pomiarów ${k === 'waist' ? 'pasa' : 'wagi'}.</p></div>`;
+    return `<div class="goal"><div class="goal-top"><b>${label}: ${dec1(f.cur)} → ${dec1(f.goal)} ${unit}</b><span class="muted small">${f.done ? '' : 'zostało ' + dec1(f.left) + ' ' + unit}</span></div>
+      <div class="progress" style="height:8px"><i style="width:${f.progress * 100}%;${f.done ? 'background:var(--gold)' : ''}"></i></div><p class="muted small" style="margin-top:7px">${esc(f.text)}</p></div>`;
+  };
+  return `<div class="sec">Cele<a data-goal>Zmień</a></div><div class="card pad">${row('weight', 'kg', 'Waga')}${row('waist', 'cm', 'Pas')}</div>`;
+}
+function goalsForm() {
+  const g = S().goals || {};
+  const m = modal(`<h3>Cele</h3><p>Zostaw puste, jeśli nie chcesz danego celu. Bezpieczne tempo redukcji to 0,3–0,7 kg tygodniowo.</p>
+    <div class="form"><label>Waga docelowa (kg)<input type="number" inputmode="decimal" step="0.1" id="g-w" value="${g.weight ?? ''}"></label><label>Pas docelowy (cm)<input type="number" inputmode="decimal" step="0.5" id="g-p" value="${g.waist ?? ''}"></label></div>
+    <div class="actions"><button class="btn ghost" id="g-c">Anuluj</button><button class="btn-sm" id="g-s">Zapisz</button></div>`, { sheet: true });
+  m.querySelector('#g-c').onclick = m.close;
+  m.querySelector('#g-s').onclick = () => {
+    const v = id => { const n = parseFloat(m.querySelector(id).value.replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : null; };
+    db.settings = { ...S(), goals: { weight: v('#g-w'), waist: v('#g-p') }, updated: Date.now() }; m.close(); changed(); renderView();
+  };
+}
+
+// ══ BUTY ════════════════════════════════════════════════════════════════════
+function shoesForm() {
+  const draw = () => {
+    const st = A.shoeStats(acts(), S());
+    const def = S().defaultShoe;
+    return `<h3>Buty</h3><p>Nowe biegi dostają domyślną parę. W szczegółach biegu możesz ją zmienić.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">${st.length ? st.map(x => `<div class="card pad" style="${x.retired ? 'opacity:.55' : ''}"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(x.name)}${def === x.id ? ' <span class="pill easy" style="margin-left:4px">domyślne</span>' : ''}</b><span class="num">${Math.round(x.km)} / ${x.limit} km</span></div>
+        <div class="progress" style="height:8px"><i style="width:${Math.min(100, x.ratio * 100)}%;${x.warn ? 'background:var(--warn)' : ''}"></i></div>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">${!x.retired && def !== x.id ? `<button class="btn ghost" data-sh="def" data-id="${x.id}">Ustaw domyślne</button>` : ''}<button class="btn ghost" data-sh="${x.retired ? 'unret' : 'ret'}" data-id="${x.id}">${x.retired ? 'Przywróć' : 'Wycofaj'}</button><button class="btn ghost" data-sh="all" data-id="${x.id}">Przypisz biegom bez butów</button></div></div>`).join('') : '<p class="muted">Brak butów.</p>'}</div>
+      <div class="form" style="margin-top:14px"><label class="full">Nazwa<input id="sh-n" placeholder="np. Nike Pegasus 41"></label><label>Limit (km)<input id="sh-l" type="number" inputmode="numeric" value="700"></label><label>Już przebiegnięte (km)<input id="sh-k" type="number" inputmode="numeric" value="0"></label></div>
+      <div class="actions"><button class="btn ghost" id="sh-close">Zamknij</button><button class="btn-sm" id="sh-add">Dodaj parę</button></div>`;
+  };
+  const m = modal(draw(), { sheet: true });
+  const save = (shoes, extra = {}) => { db.settings = { ...S(), shoes, ...extra, updated: Date.now() }; changed(); };
+  const bind = () => {
+    m.querySelector('.modal').innerHTML = draw();
+    m.querySelector('#sh-close').onclick = () => { m.close(); renderView(); };
+    m.querySelector('#sh-add').onclick = () => {
+      const name = m.querySelector('#sh-n').value.trim(); if (!name) { toast('Podaj nazwę butów', true); return; }
+      const sh = { id: 's' + Date.now().toString(36), name, limit: +m.querySelector('#sh-l').value || 700, startKm: +m.querySelector('#sh-k').value || 0, added: Date.now() };
+      save([...(S().shoes || []), sh], S().defaultShoe ? {} : { defaultShoe: sh.id }); bind();
+    };
+    m.querySelectorAll('[data-sh]').forEach(b => b.onclick = () => {
+      const id = b.dataset.id, shoes = (S().shoes || []).map(x => ({ ...x }));
+      const x = shoes.find(y => y.id === id);
+      if (b.dataset.sh === 'def') save(shoes, { defaultShoe: id });
+      if (b.dataset.sh === 'ret') { x.retired = true; save(shoes, S().defaultShoe === id ? { defaultShoe: null } : {}); }
+      if (b.dataset.sh === 'unret') { x.retired = false; save(shoes); }
+      if (b.dataset.sh === 'all') { let n = 0; acts().forEach(a => { if (C.isRun(a) && !a.shoe) { a.shoe = id; a.updated = Date.now(); n++; } }); changed(); toast(`Przypisano ${n} ${plural(n, 'bieg', 'biegi', 'biegów')}`); }
+      bind();
+    });
+  };
+  bind();
+}
+
+// ══ PLAN: GENERATOR ═════════════════════════════════════════════════════════
+function planMetaHtml(pl) {
+  const m = pl.meta; if (!m) return '';
+  const p = m.paces;
+  return `${m.check ? `<p class="small" style="margin-top:10px;line-height:1.5;color:${m.check.level === 'ok' ? 'var(--accent)' : 'var(--warn)'}">${esc(m.check.text)}</p>` : ''}
+    <div class="muted small" style="margin-top:8px;line-height:1.5">Tempa: ${p.easy ? `łatwe ${C.fmtPace(p.easy[0])}–${C.fmtPace(p.easy[1])}` : 'łatwe wg tętna'} · próg ${C.fmtPace(p.thr)} · szybkie ${C.fmtPace(p.int)} /km. Zawsze ważniejsze jest tętno.</div>`;
+}
+let wiz = null;
+function planWizard(el) {
+  const prev = activePlan()?.meta?.opts;
+  wiz = { goal: prev?.goal || 'base', weeks: prev?.weeks || 12, target: prev?.target || null, days: prev?.days || activePlan()?.days || [2, 4, 0], longDay: prev?.longDay ?? 0, maxMin: prev?.maxMin ?? 60, noIntervals: !!prev?.noIntervals, raceDate: '' };
+  const host = el ? null : modal('<div id="wiz"></div>', { sheet: true });
+  const root = el || host.querySelector('.modal');
+  const hist = P.analyzeHistory(acts(), S());
+  const draw = () => {
+    const G = P.GOALS[wiz.goal];
+    if (!wiz.days.includes(wiz.longDay)) wiz.longDay = wiz.days.includes(0) ? 0 : wiz.days.includes(6) ? 6 : wiz.days[wiz.days.length - 1];
+    root.innerHTML = `<div class="${el ? 'card pad' : ''}" style="${el ? 'margin-top:6px' : ''}">
+      <h3 style="font-size:19px;margin-bottom:4px">${activePlan() ? 'Dopasuj plan' : 'Ułóż plan biegowy'}</h3>
+      <p class="muted small" style="line-height:1.5">Plan powstaje z Twoich ostatnich treningów i odpowiedzi poniżej.</p>
+      <div class="wiz-hist">${hist.lines.map(l => `<div>• ${esc(l)}</div>`).join('')}</div>
+      <div class="wiz-q">Cel</div><div class="chips">${Object.entries(P.GOALS).map(([k, g]) => `<button class="chip ${wiz.goal === k ? 'active' : ''}" data-wg="${k}">${esc(g.label)}</button>`).join('')}</div>
+      ${G.dist ? `<div class="wiz-q">Wynik docelowy (opcjonalnie)</div><div class="form" style="margin-top:0"><label class="full"><input id="wz-t" placeholder="${wiz.goal === 'hm' ? 'np. 2:15:00' : wiz.goal === '10k' ? 'np. 59:00' : 'np. 28:00'}" value="${wiz.target ? C.fmtDur(wiz.target) : ''}" inputmode="numeric"></label></div>` : ''}
+      <div class="wiz-q">Ile tygodni${G.dist ? ' (albo data biegu)' : ''}</div><div class="chips">${[8, 10, 12, 16].map(w => `<button class="chip ${wiz.weeks === w && !wiz.raceDate ? 'active' : ''}" data-ww="${w}">${w} tyg.</button>`).join('')}</div>
+      ${G.dist ? `<div class="form" style="margin-top:8px"><label class="full">Data zawodów<input type="date" id="wz-d" value="${wiz.raceDate}"></label></div>` : ''}
+      <div class="wiz-q">Stałe dni biegowe (2–4)</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${wiz.days.includes(d) ? 'active' : ''}" data-wd="${d}">${P.DAY_SHORT[d]}</button>`).join('')}</div>
+      <div class="wiz-q">Dzień długiego biegu</div><div class="chips">${[...wiz.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => `<button class="chip ${wiz.longDay === d ? 'active' : ''}" data-wl="${d}">${P.DAY_SHORT[d]}</button>`).join('')}</div>
+      <div class="wiz-q">Maksymalnie w pozostałe dni</div><div class="chips">${[[30, '30 min'], [45, '45 min'], [60, '60 min'], [0, 'bez limitu']].map(([v, l]) => `<button class="chip ${wiz.maxMin === v ? 'active' : ''}" data-wm="${v}">${l}</button>`).join('')}</div>
+      <div class="wiz-q">Preferencje</div><div class="chips"><button class="chip ${wiz.noIntervals ? 'active' : ''}" data-wi>Nie lubię interwałów</button></div>
+      <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap"><button class="btn-primary" id="wz-go">Pokaż plan</button>${!el ? '<button class="btn ghost" id="wz-x">Anuluj</button>' : ''}</div></div>`;
+    const re = () => { readTarget(); draw(); };
+    root.querySelectorAll('[data-wg]').forEach(b => b.onclick = () => { wiz.goal = b.dataset.wg; wiz.target = null; draw(); });
+    root.querySelectorAll('[data-ww]').forEach(b => b.onclick = () => { wiz.weeks = +b.dataset.ww; wiz.raceDate = ''; re(); });
+    root.querySelectorAll('[data-wd]').forEach(b => b.onclick = () => { const d = +b.dataset.wd; wiz.days = wiz.days.includes(d) ? wiz.days.filter(x => x !== d) : [...wiz.days, d]; re(); });
+    root.querySelectorAll('[data-wl]').forEach(b => b.onclick = () => { wiz.longDay = +b.dataset.wl; re(); });
+    root.querySelectorAll('[data-wm]').forEach(b => b.onclick = () => { wiz.maxMin = +b.dataset.wm; re(); });
+    root.querySelector('[data-wi]').onclick = () => { wiz.noIntervals = !wiz.noIntervals; re(); };
+    root.querySelector('#wz-d')?.addEventListener('change', e => { wiz.raceDate = e.target.value; if (wiz.raceDate) { const w = Math.round((new Date(wiz.raceDate) - P.dayStart(Date.now())) / (7 * DAY)); wiz.weeks = Math.max(6, Math.min(20, w)); } re(); });
+    root.querySelector('#wz-x')?.addEventListener('click', () => host.close());
+    root.querySelector('#wz-go').onclick = () => {
+      readTarget();
+      if (wiz.days.length < 2 || wiz.days.length > 4) { toast('Wybierz od 2 do 4 dni', true); return; }
+      if (wiz.raceDate && new Date(wiz.raceDate) - Date.now() < 5 * 7 * DAY) { toast('Do zawodów zostało mniej niż 5 tygodni — wybierz liczbę tygodni lub późniejszą datę', true, 5000); return; }
+      preview(P.generatePlan({ ...wiz, start: Date.now() }, hist, S()));
+    };
+  };
+  const readTarget = () => {
+    const v = root.querySelector('#wz-t')?.value.trim();
+    if (v == null) return;
+    const m = v.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/);
+    wiz.target = m ? (+(m[1] || 0)) * 3600 + +m[2] * 60 + +m[3] : null;
+  };
+  const preview = pl => {
+    const byW = {}; for (const x of pl.sessions) (byW[x.week] ||= []).push(x);
+    const kindShort = x => P.sessionInfo(x, S(), pl).short;
+    root.innerHTML = `<div class="${el ? 'card pad' : ''}" style="${el ? 'margin-top:6px' : ''}">
+      <h3 style="font-size:19px">${esc(pl.label)}</h3>
+      <div class="muted small" style="margin-top:2px">${pl.meta.weeks} tygodni · ${pl.days.map(d => P.DAY_SHORT[d]).join(' · ')} · długi bieg: ${P.DAY_SHORT[wiz.longDay]}</div>
+      ${planMetaHtml(pl)}
+      <div class="wiz-weeks">${Object.entries(byW).map(([w, xs]) => `<div class="wiz-week ${xs[0].light ? 'light' : ''}"><b>T${w}</b><div>${xs.map(x => `<span class="pill ${P.sessionInfo(x, S(), pl).tone}">${esc(kindShort(x))}</span>`).join('')}</div><span class="num muted small">${xs.reduce((a, x) => a + x.min, 0)}′</span></div>`).join('')}</div>
+      <p class="muted small" style="margin-top:10px;line-height:1.5">Szare tygodnie są lżejsze. Plan startuje od dziś; ${activePlan() ? 'obecny plan zostanie zakończony (treningi i historia zostają).' : 'opuszczony trening możesz nadrobić do dnia przed kolejnym.'}</p>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn-primary" id="wz-save">Zapisz plan</button><button class="btn ghost" id="wz-back">Wróć</button></div></div>`;
+    root.querySelector('#wz-back').onclick = draw;
+    root.querySelector('#wz-save').onclick = () => { db.plan = pl; changed(); host?.close(); setView('plan'); toast('✅ Plan zapisany'); };
+  };
+  draw();
+}
+
 // ══ USTAWIENIA ══════════════════════════════════════════════════════════════
 function settingsForm() {
   const s = S();
@@ -1247,8 +1632,10 @@ function settingsForm() {
       <label class="full">Wzrost (cm) — do BMI<input type="number" inputmode="numeric" data-s="height" value="${s.height ?? ''}"></label>
     </div>
     <div class="card" style="margin-top:12px"><div class="zone-rows" id="zone-preview"></div></div>
-    <p class="hint">Gdy Zepp zaktualizuje próg (automatyczna aktualizacja), wpisz tu nową wartość — raporty i strefy przeliczą się dla wszystkich treningów.</p>
+    <p class="hint">Gdy Zepp zaktualizuje próg (automatyczna aktualizacja), wpisz tu nową wartość — raporty i strefy przeliczą się dla wszystkich treningów. Przebieg sam podpowie wyższy próg, gdy wykryje go w biegu.</p>
+    <button class="sheet-opt" id="st-shoes"><span class="ic">👟</span><span><b>Buty</b><span>${(s.shoes || []).filter(x => !x.retired).length || 'Brak'} ${plural((s.shoes || []).filter(x => !x.retired).length, 'para', 'pary', 'par')} · licznik kilometrów</span></span></button>
     <div class="actions"><button class="btn ghost" id="st-cancel">Anuluj</button><button class="btn-sm" id="st-save">Zapisz</button></div>`, { sheet: true });
+  m.querySelector('#st-shoes').onclick = () => { m.close(); shoesForm(); };
   const prev = () => { m.querySelector('#zone-preview').innerHTML = zs().map((z, i) => `<div class="zone-row" style="grid-template-columns:1fr 70px"><div class="zn"><b>${z.short}</b>${z.name}</div><div class="zt num">${z.lo}–${z.hi}</div></div>`).reverse().join(''); };
   prev(); m.querySelector('[data-s=lthr]').oninput = prev;
   m.querySelector('#st-cancel').onclick = m.close;
@@ -1300,9 +1687,7 @@ function addSheet() {
 // ══ NAWIGACJA / START ═══════════════════════════════════════════════════════
 function buildNav() {
   $('#side-nav').innerHTML = VIEWS.map(v => `<button class="nav-item" data-view="${v.key}">${icon(v.icon)}${v.label}</button>`).join('');
-  const t = VIEWS.map(v => `<button class="tab" data-view="${v.key}">${icon(v.icon)}${v.label}</button>`);
-  t.splice(2, 0, `<button class="fab" data-act="add" aria-label="Dodaj">${icon('plus')}</button>`);
-  $('#tabbar').innerHTML = t.join('');
+  $('#tabbar').innerHTML = VIEWS.map(v => `<button class="tab" data-view="${v.key}">${icon(v.icon)}${v.label}</button>`).join('');
 }
 function setView(v) {
   view = v;
@@ -1313,7 +1698,7 @@ function setView(v) {
 }
 function renderView() {
   if (view !== 'progress' && view !== 'body') killCharts();
-  if (view === 'home') renderHome(); else if (view === 'list') renderList(); else if (view === 'progress') renderProgress(); else renderBody();
+  if (view === 'home') renderHome(); else if (view === 'plan') renderPlan(); else if (view === 'list') renderList(); else if (view === 'progress') renderProgress(); else renderBody();
 }
 function renderAll() { renderView(); if (cur && $('#detail').classList.contains('open')) renderReport(); }
 
