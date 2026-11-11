@@ -1294,7 +1294,10 @@ function todayCardHtml(compact = false) {
   if (sch.finished) return `<div class="card next"><div class="ic">${icon('plan')}</div><div><div class="t">Plan ukończony 🎉</div><p>Wszystkie ${sch.total} treningów za Tobą. W zakładce Plan założysz kolejny.</p></div></div>`;
   const n = sch.next, info = P.sessionInfo(n, S(), db.plan);
   const isToday = n.status === 'today';
-  const when = n.status === 'overdue' ? `Zaległy z: ${fmtDay(n.planned)} · nadrób do ${relDay(n.deadline)}` : isToday ? (n.moved ? 'Dziś (przełożony)' : 'Dziś w planie') : `Następny: ${relDay(n.date)}${n.moved ? ' (przełożony)' : ''}`;
+  const GEN = ['niedzieli', 'poniedziałku', 'wtorku', 'środy', 'czwartku', 'piątku', 'soboty'];
+  const dl = Math.round((P.dayStart(n.deadline) - P.dayStart(Date.now())) / DAY);
+  const until = dl <= 0 ? 'dziś' : dl === 1 ? 'do jutra' : `do ${GEN[new Date(n.deadline).getDay()]}`;
+  const when = n.status === 'overdue' ? `Zaległy z: ${fmtDay(n.planned)} · nadrób ${until}` : isToday ? (n.moved ? 'Dziś (przełożony)' : 'Dziś w planie') : `Następny: ${relDay(n.date)}${n.moved ? ' (przełożony)' : ''}`;
   return `<div class="card today ${n.status === 'overdue' ? 'overdue' : ''}">
     <div class="today-top"><span class="pill ${info.tone}"><i></i>${esc(when)}</span><span class="muted small">Tydzień ${n.week}/${P.planWeeks(db.plan)}${n.light ? ' · lżejszy' : ''}</span></div>
     <h3>${esc(info.title)}</h3>
@@ -1329,13 +1332,14 @@ function renderPlan() {
   const upcoming = sch.open.slice(1, 8);
   if (upcoming.length) html += `<div class="sec">Kolejne</div><div class="card">${upcoming.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<details class="pl-row"><summary><span class="pl-date">${esc(relDay(x.date))}</span><span class="pill ${i.tone}"><i></i>${esc(i.short)}</span><span class="pl-t">${esc(i.title)}</span></summary><ul class="steps">${i.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ul></details>`; }).join('')}</div>`;
   const done = sch.sessions.filter(x => ['done', 'skipped', 'missed'].includes(x.status)).sort((a, b) => (b.at || b.planned) - (a.at || a.planned));
-  if (done.length) html += `<div class="sec">Zrobione</div><div class="card">${done.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<div class="pl-row done" ${x.runId ? `data-id="${x.runId}"` : ''}><span class="pl-date">${fmtDateShort(x.at || x.planned)}</span><span class="pl-t">${esc(i.title)}<small>${x.status === 'skipped' ? 'pominięty' : x.status === 'missed' ? 'przepadł — nie nadrobiony na czas' : esc((x.comp ? x.comp.label : 'oznaczony ręcznie') + (x.runId && P.dayStart(x.at) !== x.planned ? ` · nadrobiony (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : ''))}</small></span><span class="pl-st ${x.status !== 'done' ? 'skip' : x.comp && !x.comp.ok ? 'warn' : 'ok'}">${x.status !== 'done' ? '–' : x.comp && !x.comp.ok ? '!' : '✓'}</span></div>`; }).join('')}</div>`;
+  if (done.length) html += `<div class="sec">Zrobione</div><div class="card">${done.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<div class="pl-row done" ${x.runId ? `data-id="${x.runId}"` : ''}><span class="pl-date">${fmtDateShort(x.at || x.planned)}</span><span class="pl-t">${esc(i.title)}<small>${x.status === 'skipped' ? 'pominięty' : x.status === 'missed' ? 'przepadł — nie nadrobiony na czas' : esc((x.comp ? x.comp.label : 'oznaczony ręcznie') + (x.runId && P.dayStart(x.at) < x.planned ? ` · zrobiony dzień wcześniej (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : x.runId && P.dayStart(x.at) > x.planned ? ` · nadrobiony (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : ''))}</small></span><span class="pl-st ${x.status !== 'done' ? 'skip' : x.comp && !x.comp.ok ? 'warn' : 'ok'}">${x.status !== 'done' ? '–' : x.comp && !x.comp.ok ? '!' : '✓'}</span></div>`; }).join('')}</div>`;
   html += `<div class="sec">Jak działa plan</div><div class="card pad"><p class="muted" style="font-size:13.5px;line-height:1.6">Każdy trening ma swój stały dzień. Jeśli go opuścisz, przesuwa się <b>tylko ten jeden</b> — pokaże się jako <b>zaległy</b> i możesz go nadrobić do dnia przed kolejnym treningiem (np. czwartek → piątek lub sobota). Reszta planu zostaje na swoich dniach. Bieg z wgranego pliku FIT odhacza się sam i dostaje ocenę zgodności z planem; przycisk „Jutro” przekłada tylko bieżący trening.</p>
-    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" id="pl-days">Dopasuj plan</button><button class="btn danger" id="pl-del">Zakończ plan</button></div></div>`;
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" id="pl-chdays">Zmień dni</button><button class="btn" id="pl-days">Dopasuj plan</button><button class="btn danger" id="pl-del">Zakończ plan</button></div></div>`;
   el.innerHTML = html;
   bindTodayCard(el);
   el.querySelectorAll('.pl-row.done[data-id]').forEach(r => r.onclick = () => openDetail(r.dataset.id));
   $('#pl-days').onclick = () => planWizard(null);
+  $('#pl-chdays').onclick = changeDaysForm;
   $('#pl-del').onclick = () => { if (!confirm('Zakończyć plan? Historia treningów zostaje.')) return; db.plan = { ...db.plan, ended: Date.now(), updated: Date.now() }; changed(); renderView(); };
 }
 // ══ PULPIT: DODATKI (próg, tydzień, buty) ═══════════════════════════════════
@@ -1557,10 +1561,36 @@ function planMetaHtml(pl) {
   return `${m.check ? `<p class="small" style="margin-top:10px;line-height:1.5;color:${m.check.level === 'ok' ? 'var(--accent)' : 'var(--warn)'}">${esc(m.check.text)}</p>` : ''}
     <div class="muted small" style="margin-top:8px;line-height:1.5">Tempa: ${p.easy ? `łatwe ${C.fmtPace(p.easy[0])}–${C.fmtPace(p.easy[1])}` : 'łatwe wg tętna'} · próg ${C.fmtPace(p.thr)} · szybkie ${C.fmtPace(p.int)} /km. Zawsze ważniejsze jest tętno.</div>`;
 }
+function changeDaysForm() {
+  const pl = db.plan, n = pl.days.length;
+  let days = [...pl.days], longDay = pl.longDay ?? pl.meta?.opts?.longDay ?? days[days.length - 1];
+  const m = modal('<div id="cd"></div>', { sheet: true });
+  const root = m.querySelector('.modal');
+  const draw = () => {
+    if (!days.includes(longDay)) longDay = days.includes(0) ? 0 : days[days.length - 1];
+    root.innerHTML = `<h3>Zmień dni treningowe</h3><p>Zrobione treningi zostają w historii. Pozostałe przejdą na nowe dni, w tych samych tygodniach planu — w bieżącym tygodniu tylko na dni, które jeszcze nie minęły.</p>
+      <div class="wiz-q">Wybierz ${n} ${plural(n, 'dzień', 'dni', 'dni')}</div><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip ${days.includes(d) ? 'active' : ''}" data-cd="${d}">${P.DAY_SHORT[d]}</button>`).join('')}</div>
+      <div class="wiz-q">Dzień długiego biegu</div><div class="chips">${[...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => `<button class="chip ${longDay === d ? 'active' : ''}" data-cl="${d}">${P.DAY_SHORT[d]}</button>`).join('')}</div>
+      <p class="hint">Chcesz biegać częściej lub rzadziej? Użyj „Dopasuj plan” — wtedy plan ułoży się od nowa pod nową liczbę dni.</p>
+      <div class="actions"><button class="btn ghost" id="cd-x">Anuluj</button><button class="btn-sm" id="cd-ok">Zapisz</button></div>`;
+    root.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => { const d = +b.dataset.cd; days = days.includes(d) ? days.filter(x => x !== d) : [...days, d]; draw(); });
+    root.querySelectorAll('[data-cl]').forEach(b => b.onclick = () => { longDay = +b.dataset.cl; draw(); });
+    root.querySelector('#cd-x').onclick = m.close;
+    root.querySelector('#cd-ok').onclick = () => {
+      if (days.length !== n) { toast(`Wybierz dokładnie ${n} ${plural(n, 'dzień', 'dni', 'dni')}`, true); return; }
+      db.plan = P.changePlanDays(pl, acts(), S(), days, longDay);
+      m.close(); changed(); renderView(); toast('✅ Dni zmienione — reszta planu bez zmian');
+    };
+  };
+  draw();
+}
 let wiz = null;
 function planWizard(el) {
   const prev = activePlan()?.meta?.opts;
-  wiz = { goal: prev?.goal || 'base', weeks: prev?.weeks || 12, target: prev?.target || null, days: prev?.days || activePlan()?.days || [2, 4, 0], longDay: prev?.longDay ?? 0, maxMin: prev?.maxMin ?? 60, noIntervals: !!prev?.noIntervals, raceDate: '' };
+  const wd0 = (new Date().getDay() + 6) % 7;   // pn=0
+  wiz = { goal: prev?.goal || 'base', weeks: prev?.weeks || 12, target: prev?.target || null, days: prev?.days || activePlan()?.days || [2, 4, 0], longDay: prev?.longDay ?? 0, maxMin: prev?.maxMin ?? 60, noIntervals: !!prev?.noIntervals, raceDate: '',
+    startMode: wd0 === 0 ? 'today' : wd0 <= 2 ? 'thisMon' : 'nextMon', startDate: '' };
+  const startTs = () => { const m = P.mondayOfWeek(Date.now()); return wiz.startMode === 'today' ? P.dayStart(Date.now()) : wiz.startMode === 'thisMon' ? m : wiz.startMode === 'nextMon' ? m + 7 * DAY + 3600e3 : (wiz.startDate ? P.dayStart(new Date(wiz.startDate + 'T12:00').getTime()) : P.dayStart(Date.now())); };
   const host = el ? null : modal('<div id="wiz"></div>', { sheet: true });
   const root = el || host.querySelector('.modal');
   const hist = P.analyzeHistory(acts(), S());
@@ -1571,6 +1601,9 @@ function planWizard(el) {
       <h3 style="font-size:19px;margin-bottom:4px">${activePlan() ? 'Dopasuj plan' : 'Ułóż plan biegowy'}</h3>
       <p class="muted small" style="line-height:1.5">Plan powstaje z Twoich ostatnich treningów i odpowiedzi poniżej.</p>
       <div class="wiz-hist">${hist.lines.map(l => `<div>• ${esc(l)}</div>`).join('')}</div>
+      <div class="wiz-q">Od kiedy zaczynamy</div><div class="chips">${[['thisMon', `Ten poniedziałek (${fmtDateShort(P.mondayOfWeek(Date.now()))})`], ['today', 'Dziś'], ['nextMon', `Najbliższy poniedziałek (${fmtDateShort(P.mondayOfWeek(Date.now()) + 7 * DAY + 3600e3)})`], ['date', 'Inna data']].filter(([k]) => !(k === 'thisMon' && P.mondayOfWeek(Date.now()) === P.dayStart(Date.now()))).map(([k, l]) => `<button class="chip ${wiz.startMode === k ? 'active' : ''}" data-ws="${k}">${l}</button>`).join('')}</div>
+      ${wiz.startMode === 'date' ? `<div class="form" style="margin-top:8px"><label class="full"><input type="date" id="wz-s" value="${wiz.startDate}"></label></div>` : ''}
+      ${wiz.startMode === 'thisMon' ? `<p class="muted small" style="margin-top:6px;line-height:1.5">Treningi z dni, które już minęły, pokażą się jako zaległe — bieg zrobiony w tym tygodniu zaliczy najstarszy z nich.</p>` : ''}
       <div class="wiz-q">Cel</div><div class="chips">${Object.entries(P.GOALS).map(([k, g]) => `<button class="chip ${wiz.goal === k ? 'active' : ''}" data-wg="${k}">${esc(g.label)}</button>`).join('')}</div>
       ${G.dist ? `<div class="wiz-q">Wynik docelowy (opcjonalnie)</div><div class="form" style="margin-top:0"><label class="full"><input id="wz-t" placeholder="${wiz.goal === 'hm' ? 'np. 2:15:00' : wiz.goal === '10k' ? 'np. 59:00' : 'np. 28:00'}" value="${wiz.target ? C.fmtDur(wiz.target) : ''}" inputmode="numeric"></label></div>` : ''}
       <div class="wiz-q">Ile tygodni${G.dist ? ' (albo data biegu)' : ''}</div><div class="chips">${[8, 10, 12, 16].map(w => `<button class="chip ${wiz.weeks === w && !wiz.raceDate ? 'active' : ''}" data-ww="${w}">${w} tyg.</button>`).join('')}</div>
@@ -1582,6 +1615,8 @@ function planWizard(el) {
       <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap"><button class="btn-primary" id="wz-go">Pokaż plan</button>${!el ? '<button class="btn ghost" id="wz-x">Anuluj</button>' : ''}</div></div>`;
     const re = () => { readTarget(); draw(); };
     root.querySelectorAll('[data-wg]').forEach(b => b.onclick = () => { wiz.goal = b.dataset.wg; wiz.target = null; draw(); });
+    root.querySelectorAll('[data-ws]').forEach(b => b.onclick = () => { wiz.startMode = b.dataset.ws; re(); });
+    root.querySelector('#wz-s')?.addEventListener('change', e => { wiz.startDate = e.target.value; re(); });
     root.querySelectorAll('[data-ww]').forEach(b => b.onclick = () => { wiz.weeks = +b.dataset.ww; wiz.raceDate = ''; re(); });
     root.querySelectorAll('[data-wd]').forEach(b => b.onclick = () => { const d = +b.dataset.wd; wiz.days = wiz.days.includes(d) ? wiz.days.filter(x => x !== d) : [...wiz.days, d]; re(); });
     root.querySelectorAll('[data-wl]').forEach(b => b.onclick = () => { wiz.longDay = +b.dataset.wl; re(); });
@@ -1593,7 +1628,8 @@ function planWizard(el) {
       readTarget();
       if (wiz.days.length < 2 || wiz.days.length > 4) { toast('Wybierz od 2 do 4 dni', true); return; }
       if (wiz.raceDate && new Date(wiz.raceDate) - Date.now() < 5 * 7 * DAY) { toast('Do zawodów zostało mniej niż 5 tygodni — wybierz liczbę tygodni lub późniejszą datę', true, 5000); return; }
-      preview(P.generatePlan({ ...wiz, start: Date.now() }, hist, S()));
+      if (wiz.startMode === 'date' && !wiz.startDate) { toast('Wybierz datę startu', true); return; }
+      preview(P.generatePlan({ ...wiz, start: startTs() }, hist, S()));
     };
   };
   const readTarget = () => {
@@ -1610,7 +1646,7 @@ function planWizard(el) {
       <div class="muted small" style="margin-top:2px">${pl.meta.weeks} tygodni · ${pl.days.map(d => P.DAY_SHORT[d]).join(' · ')} · długi bieg: ${P.DAY_SHORT[wiz.longDay]}</div>
       ${planMetaHtml(pl)}
       <div class="wiz-weeks">${Object.entries(byW).map(([w, xs]) => `<div class="wiz-week ${xs[0].light ? 'light' : ''}"><b>T${w}</b><div>${xs.map(x => `<span class="pill ${P.sessionInfo(x, S(), pl).tone}">${esc(kindShort(x))}</span>`).join('')}</div><span class="num muted small">${xs.reduce((a, x) => a + x.min, 0)}′</span></div>`).join('')}</div>
-      <p class="muted small" style="margin-top:10px;line-height:1.5">Szare tygodnie są lżejsze. Plan startuje od dziś; ${activePlan() ? 'obecny plan zostanie zakończony (treningi i historia zostają).' : 'opuszczony trening możesz nadrobić do dnia przed kolejnym.'}</p>
+      <p class="muted small" style="margin-top:10px;line-height:1.5">Szare tygodnie są lżejsze. Plan startuje ${P.dayStart(pl.start) === P.dayStart(Date.now()) ? 'dziś' : fmtDay(pl.start)}; ${activePlan() ? 'obecny plan zostanie zakończony (treningi i historia zostają).' : 'opuszczony trening możesz nadrobić do dnia przed kolejnym.'}</p>
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn-primary" id="wz-save">Zapisz plan</button><button class="btn ghost" id="wz-back">Wróć</button></div></div>`;
     root.querySelector('#wz-back').onclick = draw;
     root.querySelector('#wz-save').onclick = () => { db.plan = pl; changed(); host?.close(); setView('plan'); toast('✅ Plan zapisany'); };

@@ -82,3 +82,8 @@ Po wgraniu nowej wersji aplikacja zaproponuje jednorazowe przeliczenie treningó
 - **Buty:** licznik kilometrów, domyślna para dla nowych biegów, ostrzeżenie przy limicie.
 
 Po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów (silnik v3, bo dochodzi technika biegu).
+
+### Poprawki planu (11.11)
+- **Data startu planu:** dziś, ten poniedziałek, najbliższy poniedziałek albo dowolna data. Przy starcie od poniedziałku minione treningi z tego tygodnia są zaległe, a bieg zrobiony w tym tygodniu zalicza najstarszy z nich.
+- **Bieg zrobiony przed terminem** ma etykietę „zrobiony dzień wcześniej”, a nie „nadrobiony”.
+- **„Zmień dni”:** historia zostaje, pozostałe treningi przechodzą na nowe dni. W bieżącym tygodniu trafiają tylko na dni, które jeszcze nie minęły, a jeśli dziś był już bieg, liczą się od jutra.

@@ -117,7 +117,8 @@ export function datedSessions(plan) {
   const days = [...plan.days].sort((a, b) => offsetOf(a) - offsetOf(b));
   return planSessions(plan).map(s => {
     const idx = Number(s.id.split('-')[1]) - 1;
-    return { ...s, planned: addDays(mon, (s.week - 1) * 7 + offsetOf(days[idx])) };
+    const day = s.day ?? days[idx];   // dzień ustawiony na stałe (po zmianie dni) albo z kolejności
+    return { ...s, planned: addDays(mon, (s.week - 1) * 7 + offsetOf(day)) };
   }).filter(s => s.planned >= startDay);
 }
 export function planSchedule(plan, acts, set, now = Date.now()) {
@@ -132,12 +133,15 @@ export function planSchedule(plan, acts, set, now = Date.now()) {
   });
   for (const s of list) {
     const m = marks[s.id];
-    if (m) { s.status = m.s === 'skip' ? 'skipped' : 'done'; s.at = m.ts; s.manual = true; }
+    if (!m) continue;
+    s.status = m.s === 'skip' ? 'skipped' : m.s === 'missed' ? 'missed' : 'done'; s.at = m.ts; s.manual = !m.runId;
+    if (m.runId) { s.runId = m.runId; const r = acts.find(a => a.id === m.runId); if (r) s.comp = compliance(s, r, set); }
   }
   // dopasowanie biegów: bieg z dnia D zalicza trening zaplanowany na D (albo dzień później),
   // a jeśli takiego nie ma — najstarszy zaległy, którego termin nadrobienia jeszcze trwa
   const startDay = dayStart(plan.start);
-  const runs = acts.filter(a => isRun(a) && a.start >= startDay).sort((a, b) => a.start - b.start);
+  const usedRuns = new Set(Object.values(marks).map(m => m.runId).filter(Boolean));
+  const runs = acts.filter(a => isRun(a) && a.start >= startDay && !usedRuns.has(a.id)).sort((a, b) => a.start - b.start);
   for (const r of runs) {
     const D = dayStart(r.start);
     const cands = list.filter(s => !s.status && addDays(s.date, -1) <= D && D <= s.deadline);
@@ -288,3 +292,50 @@ export function generatePlan(opts, hist, s) {
     meta: { paces, vdNow, vdTarget, check, hist: hist.lines, weeks, opts: { ...opts, days } },
   };
 }
+
+// ── ZMIANA DNI W TRAKCIE PLANU ─────────────────────────────────────────────
+// Zamknięte treningi (zrobione, pominięte, przepadłe) zostają zapisane na stałe razem z biegiem,
+// a otwarte dostają nowe dni w tych samych tygodniach planu. Długi bieg idzie na wybrany dzień,
+// akcent na dzień najdalej od niego, łatwe biegi na pozostałe.
+export function changePlanDays(plan, acts, set, newDays, longDay, now = Date.now()) {
+  const sorted = [...newDays].sort((a, b) => offsetOf(a) - offsetOf(b));
+  const oldDays = [...plan.days].sort((a, b) => offsetOf(a) - offsetOf(b));
+  const sessions = planSessions(plan).map(s => ({ ...s, day: s.day ?? oldDays[Number(s.id.split('-')[1]) - 1] }));
+  const sch = planSchedule(plan, acts, set, now);
+  const marks = { ...(plan.marks || {}) };
+  for (const x of sch.sessions) {
+    if (marks[x.id]) continue;
+    if (x.status === 'done' && x.runId) marks[x.id] = { s: 'done', ts: x.at, runId: x.runId };
+    else if (x.status === 'missed') marks[x.id] = { s: 'missed', ts: x.planned };
+  }
+  const open = new Set(sch.sessions.filter(x => !marks[x.id]).map(x => x.id));
+  const byWeek = {};
+  for (const x of sessions) if (open.has(x.id)) (byWeek[x.week] ||= []).push(x);
+  const lo = offsetOf(longDay);
+  const mon0 = mondayOf(plan.start);
+  // jeśli dziś już był bieg, nowe dni liczymy od jutra (bez dwóch treningów jednego dnia)
+  const today = acts.some(a => isRun(a) && dayStart(a.start) === dayStart(now)) ? addDays(dayStart(now), 1) : dayStart(now);
+  for (const [wk, list] of Object.entries(byWeek)) {
+    // w bieżącym tygodniu tylko dni od dziś; dni, które już minęły, idą na koniec kolejki
+    const dateOf = d => addDays(mon0, (wk - 1) * 7 + offsetOf(d));
+    const realToday = dayStart(now);
+    const free = [...sorted.filter(d => dateOf(d) >= today), ...sorted.filter(d => dateOf(d) < realToday), ...sorted.filter(d => dateOf(d) >= realToday && dateOf(d) < today)];
+    const isFree = d => dateOf(d) >= today;
+    const take = d => free.splice(free.indexOf(d), 1);
+    const isLong = x => x.kind === 'long' || x.kind === 'race' || x.kind === 'test';
+    const longS = list.find(isLong);
+    if (longS && free.includes(longDay) && isFree(longDay)) { longS.day = longDay; take(longDay); }
+    else if (longS) { const d = [...free].reverse().find(isFree) ?? free[free.length - 1]; longS.day = d; take(d); }
+    const hard = list.find(x => x !== longS && !['easy', 'long'].includes(x.kind));
+    if (hard && free.length) {
+      const pool = free.filter(isFree);
+      const far = pool.length ? [...pool].sort((a, b) => { const g = d => { const k = (offsetOf(d) - lo + 7) % 7; return Math.min(k, 7 - k); }; return g(b) - g(a); })[0] : free[0];
+      hard.day = far; take(far);
+    }
+    for (const x of list) if (x !== longS && x !== hard) { if (free.length) { x.day = free[0]; take(free[0]); } }
+  }
+  const moves = {};   // przełożenia otwartych treningów tracą sens po zmianie dni
+  for (const [k, v] of Object.entries(plan.moves || {})) if (!open.has(k)) moves[k] = v;
+  return { ...plan, days: sorted, sessions, marks, moves, longDay, meta: plan.meta ? { ...plan.meta, opts: { ...(plan.meta.opts || {}), days: sorted, longDay } } : plan.meta, updated: Date.now() };
+}
+export function mondayOfWeek(ts) { return mondayOf(ts); }
