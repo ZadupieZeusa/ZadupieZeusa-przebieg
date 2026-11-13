@@ -94,3 +94,4 @@ Po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów (silnik v3, b
 - **Przypisanie biegu:** gdy pasują dwa treningi, bieg jest dużo krótszy niż plan albo zrobiony poza dniem, po imporcie pojawia się pytanie „Który to trening z planu?”. W raporcie przycisk „Zmień” pozwala to poprawić.
 - **Realizacja planu:** średnia ocen wszystkich minionych treningów, opuszczony liczy się jako 0%. Widać ją w raporcie i w zakładce Plan.
 - **Skuteczność planu:** prognoza na dystans celu od startu planu, procent drogi do celu i tempo przy tym samym tętnie przed planem i teraz. Gdy forma stoi 4 tygodnie, aplikacja to napisze.
+- **Przebieżki i odcinki** liczone z pełnych danych zegarka (sekunda po sekundzie), nie z tempa uśrednionego co minutę. Zryw to min. 10 s wyraźnie szybciej niż reszta biegu. Silnik v4: po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów.

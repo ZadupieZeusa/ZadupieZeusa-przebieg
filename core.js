@@ -1,7 +1,7 @@
 // Przebieg — rdzeń: odczyt FIT i wszystkie obliczenia biegowe.
 // Bez DOM i bez sieci, żeby dało się to testować i przeliczać w dowolnym miejscu.
 
-export const ENGINE_VERSION = 3; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
+export const ENGINE_VERSION = 4; // podbij, gdy zmienia się sposób liczenia → aplikacja zaproponuje przeliczenie
 
 // Dystanse, dla których szukamy najlepszych odcinków (w metrach)
 export const BEST_DISTANCES = [
@@ -321,6 +321,8 @@ export function buildActivity(parsed, extra = {}) {
       }
     }
   }
+  // zrywy (przebieżki, odcinki): z pełnej rozdzielczości, nie z minut
+  const surges = run ? detectSurges(d, tt) : [];
   // średnie dynamiki biegu z minut ruchu (bez postojów i marszu)
   let tech = null;
   if (run) {
@@ -353,7 +355,7 @@ export function buildActivity(parsed, extra = {}) {
     splits,
     route,
     hrHist,
-    mins,
+    mins, surges,
     startPos,
     tech,
     te: Number.isFinite(S.te) ? Math.round(S.te * 10) / 10 : null,
@@ -390,6 +392,36 @@ export function buildActivity(parsed, extra = {}) {
     engine: ENGINE_VERSION,
   };
   return { summary, streams };
+}
+
+// Zrywy: odcinki min. 10 s wyraźnie szybsze od zwykłego tempa biegu (≥ 18% i ≥ 0,4 m/s).
+// Prędkość z okna ±3 s czasu stopera, przerwy do 3 s scalane. Wynik: [start s, czas s, prędkość ×100].
+export function detectSurges(d, tt) {
+  const n = d.length; if (n < 30) return [];
+  const v = new Array(n).fill(0);
+  for (let i = 0, a = 0, b = 0; i < n; i++) {
+    while (a < i && tt[i] - tt[a] > 3) a++;
+    if (b < i) b = i;
+    while (b < n - 1 && tt[b + 1] - tt[i] <= 3) b++;
+    const dt = tt[b] - tt[a]; v[i] = dt > 0 ? (d[b] - d[a]) / dt : 0;
+  }
+  const moving = v.filter(x => x > 1.5).sort((x, y) => x - y);
+  if (moving.length < 30) return [];
+  const base = moving[moving.length >> 1], thr = Math.max(base * 1.18, base + 0.4);
+  const out = [];
+  let s0 = -1, last = -1;
+  const close = () => {
+    if (s0 < 0) return;
+    const dur = tt[last] - tt[s0];
+    if (dur >= 10 && dur <= 900) { const sp = (d[last] - d[s0]) / Math.max(1, dur); if (sp >= base * 1.15) out.push([Math.round(tt[s0]), Math.round(dur), Math.round(sp * 100)]); }
+    s0 = -1;
+  };
+  for (let i = 0; i < n; i++) {
+    if (v[i] >= thr) { if (s0 < 0) s0 = i; last = i; }
+    else if (s0 >= 0 && tt[i] - tt[last] > 3) close();
+  }
+  close();
+  return out;
 }
 
 // ── ANALIZY NA CAŁEJ BAZIE ──────────────────────────────────────────────────

@@ -138,11 +138,13 @@ export function scoreSession(s, run, set) {
 
   // 3. struktura
   if (k === 'strides') {
-    const det = countReps(run);
-    add('str', 'Przebieżki', 20, det >= s.reps ? 1 : det > 0 ? det / s.reps : 0.5, `${s.reps} × 20 s`, det ? `widać ${det}` : 'niewidoczne w danych',
-      det === 0 ? 'Przebieżek nie widać w danych (zegarek uśrednia tempo co minutę) — zrób je wyraźnie szybciej, po 20–30 s.' : det < s.reps ? `Zrób wszystkie ${s.reps} przebieżek — to one uczą szybszego kroku.` : null);
+    const sg = run.surges ? run.surges.filter(x => x[1] <= 90) : null;
+    const det = sg ? sg.length : countReps(run);
+    const avgDur = sg && sg.length ? Math.round(sg.reduce((a, x) => a + x[1], 0) / sg.length) : null;
+    add('str', 'Przebieżki', 20, det >= s.reps ? 1 : det > 0 ? det / s.reps : sg ? 0 : 0.5, `${s.reps} × 20 s`, det ? `${det} × ${avgDur ? 'śr. ' + avgDur + ' s' : 'zryw'}` : sg ? 'brak' : 'niewidoczne w danych',
+      det === 0 ? 'Nie widać przebieżek — każda ma być wyraźnie szybsza od biegu (luźny, szybki krok przez 20 s).' : det < s.reps ? `Wykryłem ${det} z ${s.reps} przebieżek — zrób wszystkie, to one uczą szybszego kroku.` : null);
   } else if (['quality', 'intervals', 'fartlek'].includes(k) && s.reps > 1) {
-    const det = countReps(run);
+    const det = Math.max(countReps(run), run.surges ? run.surges.filter(x => x[1] >= Math.min(45, s.work * 30)).length : 0);
     add('str', 'Odcinki', 20, det >= s.reps ? (det > s.reps + 2 ? 0.8 : 1) : det / s.reps, `${s.reps} × ${s.work} min`, `wykryto ${det}`,
       det < s.reps ? `Wykryłem ${det} z ${s.reps} odcinków — każdy odcinek wyraźnie szybciej, przerwa w truchcie.` : null);
   } else if (k === 'tempo' || k === 'quality') {
