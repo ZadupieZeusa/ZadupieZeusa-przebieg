@@ -2,8 +2,8 @@
 // Plan to kolejka treningów w ustalonej kolejności. Daty nie są zapisane na sztywno:
 // liczymy je za każdym razem od ostatniego wykonanego treningu, więc opuszczony dzień
 // nigdy nie przepada — trening przechodzi na najbliższy możliwy dzień, a reszta planu za nim.
-import { isRun, fmtDur, fmtPace, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js';
-import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js';
+import { isRun, fmtDur, fmtPace, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js?v=20261113b';
+import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js?v=20261113b';
 
 const DAY = 864e5;
 export const DAY_NAMES = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
@@ -138,7 +138,8 @@ export function scoreSession(s, run, set) {
 
   // 3. struktura
   if (k === 'strides') {
-    const sg = run.surges ? run.surges.filter(x => x[1] <= 90) : null;
+    let sg = run.surges ? run.surges.filter(x => x[1] <= 45) : null;   // przebieżka: krótki zryw
+    if (sg && sg.length) { const vmax = Math.max(...sg.map(x => x[2])); sg = sg.filter(x => x[2] >= vmax * 0.85); }   // bez szybszego finiszu
     const det = sg ? sg.length : countReps(run);
     const avgDur = sg && sg.length ? Math.round(sg.reduce((a, x) => a + x[1], 0) / sg.length) : null;
     add('str', 'Przebieżki', 20, det >= s.reps ? 1 : det > 0 ? det / s.reps : sg ? 0 : 0.5, `${s.reps} × 20 s`, det ? `${det} × ${avgDur ? 'śr. ' + avgDur + ' s' : 'zryw'}` : sg ? 'brak' : 'niewidoczne w danych',

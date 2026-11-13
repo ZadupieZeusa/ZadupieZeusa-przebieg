@@ -1,7 +1,7 @@
 // Przebieg — interfejs, synchronizacja z Dyskiem Google, import, widoki.
-import * as C from './core.js';
-import * as A from './analysis.js';
-import * as P from './plan.js';
+import * as C from './core.js?v=20261113b';
+import * as A from './analysis.js?v=20261113b';
+import * as P from './plan.js?v=20261113b';
 
 // ══ KONFIGURACJA ════════════════════════════════════════════════════════════
 // Ten sam klient OAuth co FotoPlaner (autoryzowany adres: zadupiezeusa.github.io).
@@ -327,7 +327,7 @@ async function sync({ quiet = true } = {}) {
 
 // ══ IMPORT ══════════════════════════════════════════════════════════════════
 let vendor;
-const getVendor = async () => vendor ||= await import('./vendor.js');
+const getVendor = async () => vendor ||= await import('./vendor.js?v=20261113b');
 async function expandFiles(fileList) {
   const V = await getVendor();
   const out = [];

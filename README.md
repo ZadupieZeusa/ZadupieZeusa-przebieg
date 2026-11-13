@@ -95,3 +95,4 @@ Po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów (silnik v3, b
 - **Realizacja planu:** średnia ocen wszystkich minionych treningów, opuszczony liczy się jako 0%. Widać ją w raporcie i w zakładce Plan.
 - **Skuteczność planu:** prognoza na dystans celu od startu planu, procent drogi do celu i tempo przy tym samym tętnie przed planem i teraz. Gdy forma stoi 4 tygodnie, aplikacja to napisze.
 - **Przebieżki i odcinki** liczone z pełnych danych zegarka (sekunda po sekundzie), nie z tempa uśrednionego co minutę. Zryw to min. 10 s wyraźnie szybciej niż reszta biegu. Silnik v4: po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów.
+- **Pamięć przeglądarki:** pliki są ładowane z dopiskiem `?v=…` (w `index.html` i w importach). Przy każdej aktualizacji wgrywaj wszystkie pliki z paczki naraz — wtedy przeglądarka nie zostanie przy starych wersjach.

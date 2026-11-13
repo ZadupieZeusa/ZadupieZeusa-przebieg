@@ -394,7 +394,7 @@ export function buildActivity(parsed, extra = {}) {
   return { summary, streams };
 }
 
-// Zrywy: odcinki min. 10 s wyraźnie szybsze od zwykłego tempa biegu (≥ 18% i ≥ 0,4 m/s).
+// Zrywy: odcinki min. 10 s wyraźnie szybsze od zwykłego tempa biegu (≥ 22% i ≥ 0,45 m/s).
 // Prędkość z okna ±3 s czasu stopera, przerwy do 3 s scalane. Wynik: [start s, czas s, prędkość ×100].
 export function detectSurges(d, tt) {
   const n = d.length; if (n < 30) return [];
@@ -407,13 +407,13 @@ export function detectSurges(d, tt) {
   }
   const moving = v.filter(x => x > 1.5).sort((x, y) => x - y);
   if (moving.length < 30) return [];
-  const base = moving[moving.length >> 1], thr = Math.max(base * 1.18, base + 0.4);
+  const base = moving[moving.length >> 1], thr = Math.max(base * 1.22, base + 0.45);
   const out = [];
   let s0 = -1, last = -1;
   const close = () => {
     if (s0 < 0) return;
     const dur = tt[last] - tt[s0];
-    if (dur >= 10 && dur <= 900) { const sp = (d[last] - d[s0]) / Math.max(1, dur); if (sp >= base * 1.15) out.push([Math.round(tt[s0]), Math.round(dur), Math.round(sp * 100)]); }
+    if (dur >= 10 && dur <= 900) { const sp = (d[last] - d[s0]) / Math.max(1, dur); if (sp >= base * 1.2) out.push([Math.round(tt[s0]), Math.round(dur), Math.round(sp * 100)]); }
     s0 = -1;
   };
   for (let i = 0; i < n; i++) {
