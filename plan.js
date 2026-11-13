@@ -2,8 +2,8 @@
 // Plan to kolejka treningów w ustalonej kolejności. Daty nie są zapisane na sztywno:
 // liczymy je za każdym razem od ostatniego wykonanego treningu, więc opuszczony dzień
 // nigdy nie przepada — trening przechodzi na najbliższy możliwy dzień, a reszta planu za nim.
-import { isRun, fmtDur, fmtPace, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js?v=20261113b';
-import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js?v=20261113b';
+import { isRun, fmtDur, fmtPace, fmtKm, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js?v=20261113c';
+import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js?v=20261113c';
 
 const DAY = 864e5;
 export const DAY_NAMES = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
@@ -138,8 +138,7 @@ export function scoreSession(s, run, set) {
 
   // 3. struktura
   if (k === 'strides') {
-    let sg = run.surges ? run.surges.filter(x => x[1] <= 45) : null;   // przebieżka: krótki zryw
-    if (sg && sg.length) { const vmax = Math.max(...sg.map(x => x[2])); sg = sg.filter(x => x[2] >= vmax * 0.85); }   // bez szybszego finiszu
+    const sg = stridesOf(run);
     const det = sg ? sg.length : countReps(run);
     const avgDur = sg && sg.length ? Math.round(sg.reduce((a, x) => a + x[1], 0) / sg.length) : null;
     add('str', 'Przebieżki', 20, det >= s.reps ? 1 : det > 0 ? det / s.reps : sg ? 0 : 0.5, `${s.reps} × 20 s`, det ? `${det} × ${avgDur ? 'śr. ' + avgDur + ' s' : 'zryw'}` : sg ? 'brak' : 'niewidoczne w danych',
@@ -191,6 +190,12 @@ export function scoreSession(s, run, set) {
     fartlek: 'Zabawa tempem zrobiona jak trzeba.', progression: 'Ładnie narastający bieg — mocna końcówka na zmęczonych nogach.', race: 'Sprawdzian pobiegnięty mądrze.', test: 'Sprawdzian pobiegnięty mądrze.' }[k] || 'Zgodnie z planem.';
   const tip = weak ? weak.tip : praise;
   return { ok: pct >= 70, pct, verdict, tip, parts, label: `${pct}% · ${verdict}` };
+}
+// przebieżki: krótkie zrywy (do 45 s), bez wolniejszego finiszu
+export function stridesOf(run) {
+  let sg = run.surges ? run.surges.filter(x => x[1] <= 45) : null;
+  if (sg && sg.length) { const vmax = Math.max(...sg.map(x => x[2])); sg = sg.filter(x => x[2] >= vmax * 0.85); }
+  return sg;
 }
 // zgodność wstecz
 export const compliance = scoreSession;
@@ -505,4 +510,107 @@ export function planProgress(plan, acts, set, now = Date.now()) {
     else note = 'Forma na razie bez zmian — to normalne na tym etapie planu.';
   }
   return { sch, exec, quality, missed, closed: closed.length, done: sch.done, total: sch.total, weeksIn, form, pace, note };
+}
+
+// ── OMÓWIENIE TRENINGU Z PLANU ─────────────────────────────────────────────
+// Opis „jak trener”: co wyszło, co nie i KIEDY (z przebiegu tętna i tempa), dlaczego to ważne, jak następnym razem.
+export function sessionDebrief(ses, run, st, set, plan) {
+  const c = ses.comp; if (!c || !c.parts?.length || !st?.t?.length) return null;
+  const z = zonesFor(set.lthr), Z2 = z[1].hi, Z1 = z[0].hi, k = ses.kind;
+  const T = st.t, D = st.d, H = st.hr, n = T.length;
+  const km = m => fmtKm(m, 1);
+  const iAt = t => { let i = 0; while (i < n - 1 && T[i] < t) i++; return i; };
+  const seg = (t0, t1) => {
+    const a = iAt(t0), b = Math.max(a, iAt(t1)); const hs = [];
+    for (let i = a; i <= b; i++) if (H[i] != null) hs.push(H[i]);
+    hs.sort((x, y) => x - y);
+    const dd = D[b] - D[a], dt = T[b] - T[a];
+    return { a, b, km0: D[a], km1: D[b], dur: dt, pace: dd > 20 ? dt / dd * 1000 : null,
+      hr: hs.length ? Math.round(hs.reduce((x, y) => x + y, 0) / hs.length) : null, hrMax: hs.length ? hs[hs.length - 1] : null, hr90: hs.length ? hs[Math.floor(hs.length * 0.9)] : null };
+  };
+  const tEnd = T[n - 1];
+  const good = [], issues = [], factors = [];
+  const nt = run.note || {}, w = run.weather;
+  if (w && w.feels != null && w.feels <= 2) factors.push(`zimno (odczuwalne ${Math.round(w.feels)}°C)`);
+  else if (w && w.t != null && w.t >= 22) factors.push(`ciepło (${Math.round(w.t)}°C)`);
+  if (nt.coffee) factors.push('kawa przed biegiem');
+  if (nt.sleep === 'bad') factors.push('słaby sen');
+  const P = Object.fromEntries(c.parts.map(p => [p.key, p]));
+
+  // co wyszło
+  for (const p of c.parts) if (p.score >= 0.9) good.push(p.key === 'str' && k === 'strides' ? `Przebieżki zrobiłeś dobrze: ${p.done.replace('×', 'zrywy po').replace('śr.', 'średnio')}.`
+    : p.key === 'vol' ? `Czas się zgadza: ${p.done} przy planie ${p.plan}.` : p.key === 'day' ? 'Trening w zaplanowanym dniu.' : p.key === 'int' ? `Intensywność zgodna z planem (${p.done}).` : `${p.label}: ${p.done}.`);
+
+  // 1. intensywność — z przebiegu w czasie
+  const pi = P.int;
+  if (pi && pi.score < 0.9 && ['easy', 'long', 'strides', 'progression'].includes(k)) {
+    const b = [];
+    const zt = zoneTimes(run, set.lthr), tot = zt ? zt.reduce((x, y) => x + y, 0) : 0;
+    if (zt && tot) {
+      const m = v => Math.round(v / 60);
+      b.push(`Plan: ${pi.plan}. Spokojnie było ${pi.done} (ok. ${m(zt[0] + zt[1] + zt[2])} min), w strefie 3 ok. ${m(zt[3])} min, w strefach 4–5 ok. ${m(zt[4] + zt[5])} min. Średnie tętno ${run.avgHr}, maksymalne ${run.maxHr}.`);
+    }
+    const sg = k === 'strides' ? (stridesOf(run) || []) : [];
+    if (sg.length) {
+      const s0 = sg[0][0], s1 = sg[sg.length - 1][0] + sg[sg.length - 1][1];
+      const pre = seg(0, s0), blk = seg(s0, s1), post = seg(s1, tEnd);
+      if (pre.hr90 != null) b.push(`Pierwsze ${km(pre.km1)} km: tętno doszło do ok. ${pre.hr90}${pre.hr90 > Z2 + 3 ? ` — ponad granicę spokojnej strefy (${Z2}), za mocno już na rozgrzewce` : pre.hr90 >= Z2 - 6 ? `, pod samą granicę spokojnej strefy (${Z2})` : ' — dobrze, spokojnie'}, tempo ${fmtPace(pre.pace)}/km.${pre.hr90 >= Z2 - 6 && factors.length ? ` Swoje dołożyły: ${factors.join(', ')} — każde podbija tętno o kilka uderzeń.` : ''}`);
+      if (blk.hrMax) b.push(`Przebieżki: tętno skoczyło do ok. ${blk.hrMax} — to normalne.`);
+      const gaps = [];
+      for (let i = 0; i + 1 < sg.length; i++) gaps.push(seg(sg[i][0] + sg[i][1], sg[i + 1][0]));
+      const gp = gaps.filter(g => g.pace), gPace = gp.length ? gp.reduce((x, g) => x + g.pace, 0) / gp.length : null;
+      if (gPace && gPace < 9 * 60) b.push(`Między zrywami trucht ok. ${fmtPace(gPace)}/km — bez odpoczynku, więc tętno nie zdążyło spaść.`);
+      if (post.dur > 120) {
+        const h1 = seg(s1, s1 + post.dur / 2), h2 = seg(s1 + post.dur / 2, tEnd);
+        const acc = h1.pace && h2.pace && h1.pace - h2.pace > 20;
+        if (post.hr > Z2 || acc) b.push(`Po przebieżkach (${km(post.km1 - post.km0)} km, ${Math.round(post.dur / 60)} min) tętno ${post.hr > Z2 ? `już nie spadło (średnio ${post.hr})` : `średnio ${post.hr}`}${acc ? `, a końcówkę przyspieszałeś do ok. ${fmtPace(h2.pace)}/km i tętno doszło do ${h2.hrMax}. Zamiast schłodzenia wyszedł bieg narastający` : ''}.`);
+      }
+    } else {
+      // bez przebieżek: trzy części biegu
+      const parts3 = [0, 1, 2].map(i => seg(tEnd * i / 3, tEnd * (i + 1) / 3));
+      let cross = null; for (let i = 0; i < n; i++) if (H[i] != null && H[i] > Z2 && T[i] > 300) { let ok = 0; for (let j = i; j < Math.min(n, i + 30); j++) if (H[j] > Z2) ok++; if (ok >= 25) { cross = i; break; } }
+      b.push(`Tętno w kolejnych częściach biegu: ${parts3.map(p => p.hr).join(' → ')} przy tempie ${parts3.map(p => fmtPace(p.pace)).join(' → ')}/km.`);
+      if (cross != null) b.push(`Od ${km(D[cross])} km (${Math.round(T[cross] / 60)}. minuta) tętno trzymało się powyżej ${Z2} — tu trzeba było zwolnić.${factors.length ? ` Swoje dołożyły: ${factors.join(', ')}.` : ''}`);
+      if (parts3[2].pace && parts3[0].pace && parts3[0].pace - parts3[2].pace > 20) b.push(`Końcówka szybsza o ${Math.round(parts3[0].pace - parts3[2].pace)} s/km niż początek — przy spokojnym biegu nie przyspieszaj na koniec.`);
+    }
+    issues.push({ title: `Za mocno (${Math.round(pi.score * pi.share)}/${pi.share})`, bullets: b });
+  } else if (pi && pi.score < 0.9) issues.push({ title: `${pi.label} (${Math.round(pi.score * pi.share)}/${pi.share})`, bullets: [`Plan: ${pi.plan}, zrobione: ${pi.done}.`, pi.tip].filter(Boolean) });
+
+  // 2. czas
+  const pv = P.vol;
+  if (pv && pv.score < 0.9) {
+    const mins = Math.round(run.timer / 60);
+    issues.push({ title: `${mins > ses.min ? 'Za długo' : 'Za krótko'} (${Math.round(pv.score * pv.share)}/${pv.share})`, bullets: [mins > ses.min
+      ? `Plan ${ses.min} min, biegłeś ${mins}.${pi && pi.score < 0.9 ? ` Dodatkowe ${mins - ses.min} min było w dodatku w wysokich strefach.` : ''}`
+      : `Plan ${ses.min} min, biegłeś ${mins}. Brakujące minuty to brakująca baza — lepiej wolniej, ale do końca.`] });
+  }
+  // 3. struktura / termin
+  for (const key of ['str', 'day']) { const p = P[key]; if (p && p.score < 0.9) issues.push({ title: `${p.label} (${Math.round(p.score * p.share)}/${p.share})`, bullets: [`Plan: ${p.plan}, zrobione: ${p.done}.`, p.tip].filter(Boolean) }); }
+
+  // dlaczego to ważne
+  let why = null;
+  const easyK = ['easy', 'long', 'strides'].includes(k);
+  if (easyK && pi && pi.score < 0.6) why = k === 'strides' ? 'Ten trening miał być lekki: przebieżki uczą szybszego kroku bez zmęczenia, a spokojne minuty budują wytrzymałość. Wyszedł z tego mocny trening — organizm potrzebuje teraz więcej odpoczynku, a kolejny trening z planu zaczniesz zmęczony.'
+    : 'Spokojny bieg buduje bazę tlenową tylko wtedy, gdy jest naprawdę spokojny. Za mocny daje mniej korzyści, a więcej zmęczenia — i odbiera siły na trening akcentowy.';
+  else if (['quality', 'tempo', 'intervals', 'fartlek'].includes(k) && pi && pi.score < 0.9) why = pi.done && parseInt(pi.done) < parseInt(pi.plan) ? 'Za lekki akcent to za słaby bodziec — próg mleczanowy rośnie dopiero przy kilkunastu minutach pracy w jego strefie.' : 'Za dużo mocnej pracy podnosi zmęczenie bardziej niż formę. Liczy się powtarzalność z tygodnia na tydzień, nie jeden mocny dzień.';
+  else if (pv && pv.score < 0.9 && run.timer / 60 > ses.min) why = 'Plan zwiększa objętość stopniowo, żeby ścięgna i stawy nadążały za sercem. Dokładanie minut „na zapas” to najczęstsza droga do przeciążeń.';
+
+  // jak następnym razem
+  const nx = [];
+  const ep = plan?.meta?.paces?.easy;
+  if (easyK) {
+    const firstMin = k === 'strides' ? Math.max(15, ses.min - 5) : ses.min;
+    nx.push(`${k === 'strides' ? `Przez pierwsze ${firstMin} min` : 'Cały bieg'} tętno do ${Z2}. Jeśli rośnie — zwolnij${ep ? ` nawet do ${fmtPace(ep[1])}/km` : ''} albo wtrąć minutę marszu.${factors.length ? ' W zimne dni, po kawie i po słabej nocy zacznij jeszcze wolniej.' : ''}`);
+    if (k === 'strides') {
+      nx.push(`Przebieżki na koniec: ${ses.reps} × 20 s luźno i szybko, po każdej ok. minuty marszu, aż tętno spadnie poniżej ${Z1}.`);
+      nx.push('Po ostatniej przebieżce 3–5 min bardzo spokojnie i koniec — bez przyspieszania na ostatnim kilometrze.');
+    }
+    nx.push(`Łącznie ok. ${ses.min}–${ses.min + 3} min.`);
+  } else if (['quality', 'tempo', 'intervals', 'fartlek'].includes(k)) {
+    nx.push(`10–15 min rozgrzewki z tętnem do ${Z2}.`);
+    nx.push(k === 'tempo' || ses.reps === 1 ? `${ses.work} min ciągle w strefie ${z[3].lo}–${z[3].hi} — równo, „komfortowo ciężko”.` : `${ses.reps} × ${ses.work} min w strefie ${k === 'intervals' || k === 'fartlek' ? `od ${z[3].lo} w górę` : `${z[3].lo}–${z[3].hi}`}, przerwy w truchcie aż tętno spadnie poniżej ${Z2}.`);
+    nx.push('10 min spokojnego schłodzenia.');
+  }
+  if (!issues.length) { why = null; if (!nx.length) return { good, issues, why, next: [] }; }
+  return { good, issues, why, next: issues.length ? nx : [] };
 }

@@ -1,7 +1,7 @@
 // Przebieg — interfejs, synchronizacja z Dyskiem Google, import, widoki.
-import * as C from './core.js?v=20261113b';
-import * as A from './analysis.js?v=20261113b';
-import * as P from './plan.js?v=20261113b';
+import * as C from './core.js?v=20261113c';
+import * as A from './analysis.js?v=20261113c';
+import * as P from './plan.js?v=20261113c';
 
 // ══ KONFIGURACJA ════════════════════════════════════════════════════════════
 // Ten sam klient OAuth co FotoPlaner (autoryzowany adres: zadupiezeusa.github.io).
@@ -327,7 +327,7 @@ async function sync({ quiet = true } = {}) {
 
 // ══ IMPORT ══════════════════════════════════════════════════════════════════
 let vendor;
-const getVendor = async () => vendor ||= await import('./vendor.js?v=20261113b');
+const getVendor = async () => vendor ||= await import('./vendor.js?v=20261113c');
 async function expandFiles(fileList) {
   const V = await getVendor();
   const out = [];
@@ -795,7 +795,15 @@ function planCardHtml(a, s) {
   let html = `<div class="plan-card"><div class="pc-head">${c.pct != null ? ringSvg(c.pct) : ''}<div style="flex:1;min-width:0"><div class="pc-k">Trening z planu · tydzień ${ps.week}/${weeks} · ${idx} z ${st.sch.total}</div><b class="pc-t">${esc(info.title)}</b>${c.verdict ? `<div class="pc-v ${c.pct >= 75 ? 'ok' : c.pct >= 55 ? 'mid' : 'bad'}">${esc(c.verdict)}</div>` : '<div class="muted small">oznaczony ręcznie</div>'}</div><button class="pc-chg" data-link title="Zmień, który to trening">Zmień</button></div>`;
   if (c.parts?.length) {
     html += `<div class="pc-parts">${c.parts.map(p => `<div class="pc-part"><div class="pc-pt"><b>${esc(p.label)}</b><span class="pc-sc ${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}">${Math.round(p.score * p.share)}/${p.share}</span></div><div class="pc-bar"><i class="${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}" style="width:${Math.round(p.score * 100)}%"></i></div><div class="pc-pd"><span>plan: ${esc(p.plan)}</span><span>zrobione: <b>${esc(p.done)}</b></span></div></div>`).join('')}</div>`;
-    html += `<div class="pc-tip">${esc(c.tip)}</div>`;
+    const db_ = curStreams && cur === a ? P.sessionDebrief(ps, a, curStreams, s, db.plan) : null;
+    if (db_ && (db_.issues.length || db_.good.length)) {
+      html += `<div class="debrief">`;
+      if (db_.good.length) html += `<p class="db-good">${db_.good.map(esc).join(' ')}</p>`;
+      if (db_.issues.length) html += `<p class="db-lead">${db_.good.length ? 'Ocenę obniżyło:' : 'Co nie wyszło:'}</p>` + db_.issues.map((x, i) => `<div class="db-sec"><b>${i + 1}. ${esc(x.title)}</b><ul>${x.bullets.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('');
+      if (db_.why) html += `<div class="db-sec"><b>Dlaczego to ma znaczenie</b><p>${esc(db_.why)}</p></div>`;
+      if (db_.next.length) html += `<div class="db-sec"><b>Jak to zrobić następnym razem</b><ol>${db_.next.map(t => `<li>${esc(t)}</li>`).join('')}</ol></div>`;
+      html += `</div>`;
+    } else html += `<div class="pc-tip">${esc(c.tip)}</div>`;
   }
   const pr = P.planProgress(db.plan, acts(), s);
   const c1 = v => v.toFixed(1).replace('.', ',');
