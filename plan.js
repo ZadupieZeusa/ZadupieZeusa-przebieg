@@ -3,7 +3,7 @@
 // liczymy je za każdym razem od ostatniego wykonanego treningu, więc opuszczony dzień
 // nigdy nie przepada — trening przechodzi na najbliższy możliwy dzień, a reszta planu za nim.
 import { isRun, fmtDur, fmtPace, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js';
-import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax } from './analysis.js';
+import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js';
 
 const DAY = 864e5;
 export const DAY_NAMES = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
@@ -84,28 +84,113 @@ export function sessionInfo(s, set, plan = null) {
   return { title: 'Trening', tone: 'easy', short: '', steps: [] };
 }
 
-// czy bieg zgadza się z planem
-export function compliance(s, run, set) {
-  if (!run) return { ok: true, label: 'Oznaczony ręcznie' };
-  const notes = [];
-  let ok = true;
+// ── OCENA WYKONANIA TRENINGU (0–100%, jak w Zepp) ─────────────────────────
+// Cztery części z wagami: intensywność 40, czas/dystans 30, struktura 20, termin 10.
+// Brakująca część (np. bez tętna) nie karze — wagi rozkładają się na pozostałe.
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const pc = v => Math.round(v * 100) + '%';
+export const VERDICTS = [[90, 'Wzorowo'], [75, 'Dobrze'], [55, 'Częściowo'], [0, 'Słabo']];
+export const verdictOf = p => VERDICTS.find(([m]) => p >= m)[1];
+export function scoreSession(s, run, set) {
+  if (!run) return { ok: true, pct: null, label: 'Oznaczony ręcznie', parts: [], verdict: null, tip: null };
+  const z = zonesFor(set.lthr);
   const zt = zoneTimes(run, set.lthr);
   const tot = zt ? zt.reduce((a, b) => a + b, 0) : 0;
-  const hard = zt && tot ? (zt[4] + zt[5]) / tot : null;
-  const aboveEasy = zt && tot ? (zt[3] + zt[4] + zt[5]) / tot : null;
-  const mins = run.timer / 60;
-  if (s.kind === 'easy' || s.kind === 'long') {
-    if (aboveEasy != null && aboveEasy > 0.3) { ok = false; notes.push(`za mocno — ${Math.round(aboveEasy * 100)}% czasu powyżej strefy 2`); }
-  } else if (['quality', 'fartlek', 'tempo', 'intervals'].includes(s.kind)) {
-    if (hard != null && hard < 0.1) { ok = false; notes.push('za lekko — mało czasu na progu'); }
+  const hasHr = !!zt && tot >= run.timer * 0.5;
+  const sh = i => hasHr ? zt[i] / tot : 0;
+  const easyShare = sh(0) + sh(1) + sh(2);
+  const hardMin = hasHr ? (zt[4] + zt[5]) / 60 : 0;
+  const mins = run.timer / 60, k = s.kind;
+  const parts = [];
+  const add = (key, label, w, score, plan, done, tip = null) => parts.push({ key, label, w, score: clamp01(score), plan, done, tip });
+  const easyKinds = ['easy', 'long', 'strides'];
+  const work = k === 'tempo' || (k === 'quality' && s.reps === 1) ? s.work : (s.reps || 0) * (s.work || 0);
+
+  // 1. intensywność
+  if (!hasHr) add('int', 'Intensywność', 40, 0.75, 'wg tętna', 'brak tętna', 'Biegaj z pomiarem tętna — bez niego ocena intensywności jest tylko przybliżona.');
+  else if (easyKinds.includes(k)) {
+    const tgt = k === 'strides' ? 0.75 : 0.85;
+    add('int', 'Intensywność', 40, (easyShare - 0.4) / (tgt - 0.4), `≥ ${pc(tgt)} czasu do ${z[1].hi} bpm`, `${pc(easyShare)} czasu`,
+      easyShare < tgt ? `Za mocno jak na spokojny bieg. Trzymaj tętno do ${z[1].hi} bpm — zwolnij albo przejdź chwilę marszem, zwłaszcza pod górę.` : null);
+  } else if (['quality', 'tempo', 'intervals', 'fartlek'].includes(k)) {
+    const r = work ? hardMin / work : 1;
+    add('int', 'Intensywność', 40, r < 0.8 ? r / 0.8 : r <= 1.6 ? 1 : 1 - (r - 1.6) * 0.8, `${work} min od ${z[3].lo} bpm`, `${Math.round(hardMin)} min`,
+      r < 0.8 ? `Odcinki za lekkie — w części mocnej tętno ma dojść do ${z[3].lo}–${z[3].hi} bpm.` : r > 1.6 ? 'Za dużo mocnej pracy — rozgrzewka, przerwy i schłodzenie mają być naprawdę spokojne.' : null);
+  } else if (k === 'progression') {
+    const okE = clamp01((easyShare - 0.4) / 0.25), okH = clamp01(hardMin / Math.max(1, s.work * 0.5));
+    add('int', 'Intensywność', 40, 0.6 * okE + 0.4 * okH, `spokojnie + ${s.work} min mocniej`, `${pc(easyShare)} łatwo, ${Math.round(hardMin)} min mocno`,
+      okH < 1 ? 'Końcówka za spokojna — ostatnie minuty przyspiesz aż do strefy progu.' : okE < 1 ? 'Początek za szybki — pierwsza część ma być w strefie 2.' : null);
+  } else if (k === 'race' || k === 'test') {
+    const h = sh(4) + sh(5);
+    add('int', 'Intensywność', 40, h / 0.6, 'większość od progu w górę', `${pc(h)} czasu`, h < 0.6 ? 'Został spory zapas — następnym razem odważniej w drugiej połowie.' : null);
   }
-  if (s.kind === 'race') { const b = run.bests?.[s.dist]; if (b) notes.push(`${s.label} w ${fmtDur(b)}`); else { ok = false; notes.push(`krócej niż ${s.label}`); } }
-  else if (s.kind !== 'test') {
-    if (mins < s.min * 0.75) { ok = false; notes.push(`krócej (${Math.round(mins)} z ${s.min} min)`); }
-    else if (mins > s.min * 1.35) notes.push(`dłużej (${Math.round(mins)} min)`);
-  } else if (run.bests?.[5000]) notes.push(`5 km w ${fmtDur(run.bests[5000])}`);
-  return { ok, label: ok ? (notes.length ? 'Zrobione · ' + notes.join(', ') : 'Zgodnie z planem') : notes.join(', ') };
+
+  // 2. czas / dystans
+  if (k === 'race' || k === 'test') {
+    const dist = s.dist || 5000, label = s.label || '5 km', best = run.bests?.[dist];
+    add('vol', 'Dystans', 30, best ? 1 : run.distance / dist, label, best ? `${label} w ${fmtDur(best)}` : `${(run.distance / 1000).toFixed(2).replace('.', ',')} km`,
+      best ? null : `Przebiegnij cały dystans ${label} — inaczej nie ma porównania z celem.`);
+  } else {
+    const r = mins / s.min;
+    add('vol', 'Czas', 30, r < 0.9 ? (r - 0.5) / 0.4 : r <= 1.25 ? 1 : Math.max(0.3, 1 - (r - 1.25) * 1.2), `${s.min} min`, `${Math.round(mins)} min`,
+      r < 0.9 ? `Zabrakło ok. ${Math.round(s.min - mins)} min do planu.` : r > 1.25 ? 'Wyraźnie dłużej niż w planie — więcej nie znaczy lepiej, plan rośnie stopniowo celowo.' : null);
+  }
+
+  // 3. struktura
+  if (k === 'strides') {
+    const det = countReps(run);
+    add('str', 'Przebieżki', 20, det >= s.reps ? 1 : det > 0 ? det / s.reps : 0.5, `${s.reps} × 20 s`, det ? `widać ${det}` : 'niewidoczne w danych',
+      det === 0 ? 'Przebieżek nie widać w danych (zegarek uśrednia tempo co minutę) — zrób je wyraźnie szybciej, po 20–30 s.' : det < s.reps ? `Zrób wszystkie ${s.reps} przebieżek — to one uczą szybszego kroku.` : null);
+  } else if (['quality', 'intervals', 'fartlek'].includes(k) && s.reps > 1) {
+    const det = countReps(run);
+    add('str', 'Odcinki', 20, det >= s.reps ? (det > s.reps + 2 ? 0.8 : 1) : det / s.reps, `${s.reps} × ${s.work} min`, `wykryto ${det}`,
+      det < s.reps ? `Wykryłem ${det} z ${s.reps} odcinków — każdy odcinek wyraźnie szybciej, przerwa w truchcie.` : null);
+  } else if (k === 'tempo' || k === 'quality') {
+    let best = 0, cur = 0;
+    for (const m of run.mins || []) { if (m[0] != null && m[0] >= z[3].lo - 2) { cur++; best = Math.max(best, cur); } else cur = 0; }
+    if (hasHr) add('str', 'Ciągłość', 20, best / Math.max(1, s.work * 0.8), `${s.work} min bez przerwy`, `${best} min`,
+      best < s.work * 0.8 ? 'Odcinek progowy się rwał — utrzymaj równe, „komfortowo ciężkie” tempo bez zatrzymań.' : null);
+  } else if (k === 'progression') {
+    const m = (run.mins || []).filter(x => x[1] > 0), n = Math.floor(m.length / 3);
+    if (n >= 3) { const v1 = m.slice(0, n).reduce((a, x) => a + x[1], 0) / n, v3 = m.slice(-n).reduce((a, x) => a + x[1], 0) / n;
+      add('str', 'Narastanie', 20, v3 > v1 * 1.04 ? 1 : v3 > v1 ? 0.6 : 0.2, 'końcówka szybciej', v3 > v1 ? `+${Math.round((v3 / v1 - 1) * 100)}% prędkości` : 'bez przyspieszenia',
+        v3 > v1 * 1.04 ? null : 'Ostatnia część ma być wyraźnie szybsza od początku.'); }
+  } else {
+    const eff = efficiency(run);
+    const sp = (run.splits || []).filter(x => x.dist >= 900);
+    let diff = null;
+    if (sp.length >= 3) { const h = Math.floor(sp.length / 2); diff = sp.slice(-h).reduce((a, x) => a + x.pace, 0) / h - sp.slice(0, h).reduce((a, x) => a + x.pace, 0) / h; }
+    if (k === 'race' || k === 'test') {
+      if (diff != null) add('str', 'Rozłożenie sił', 20, diff <= 5 ? 1 : 1 - (diff - 5) / 30, 'druga połowa równo lub szybciej', diff <= 0 ? `szybciej o ${Math.round(-diff)} s/km` : `wolniej o ${Math.round(diff)} s/km`,
+        diff > 5 ? 'Start za szybki — pierwszy kilometr w tempie docelowym, przyspieszaj dopiero w drugiej połowie.' : null);
+    } else if (eff || diff != null) {
+      const dr = eff ? eff.drift : 0;
+      const sc = 1 - Math.max(0, (dr - 5) / 10) - Math.max(0, ((diff || 0) - 15) / 45);
+      add('str', 'Równość', 20, sc, 'dryf < 5%, równe tempo', `${eff ? 'dryf ' + Math.max(0, dr).toFixed(1).replace('.', ',') + '%' : ''}${eff && diff != null ? ', ' : ''}${diff != null ? (Math.abs(diff) < 8 ? 'tempo równe' : diff > 0 ? `2. połowa wolniej o ${Math.round(diff)} s` : `2. połowa szybciej o ${Math.round(-diff)} s`) : ''}`,
+        dr > 5 ? 'Tętno rosło pod koniec przy tym samym tempie — zacznij wolniej, przy dłuższych biegach pij.' : diff != null && diff > 15 ? 'Druga połowa wyraźnie wolniejsza — pierwsze kilometry spokojniej.' : null);
+    }
+  }
+
+  // 4. termin
+  if (s.planned != null) {
+    const D = dayStart(run.start), due = s.date ?? s.planned;
+    const [sc, txt] = D === due ? [1, 'w terminie'] : D < due ? [0.9, 'dzień wcześniej'] : [0.7, 'nadrobiony'];
+    add('day', 'Termin', 10, sc, DAY_SHORT[new Date(due).getDay()], txt, sc < 1 && D > due ? 'Staraj się biegać w zaplanowane dni — wtedy odpoczynek między treningami jest taki, jak trzeba.' : null);
+  }
+
+  const W = parts.reduce((a, p) => a + p.w, 0) || 1;
+  const pct = Math.round(parts.reduce((a, p) => a + p.w * p.score, 0) / W * 100);
+  parts.forEach(p => p.share = Math.round(p.w / W * 100));
+  const verdict = verdictOf(pct);
+  const weak = parts.filter(p => p.tip && p.score < 0.9).sort((a, b) => (a.score - b.score) || (b.w - a.w))[0];
+  const praise = { easy: 'Spokojnie i równo — dokładnie tak buduje się bazę.', long: 'Długi bieg zrobiony jak trzeba: spokojnie i do końca.', strides: 'Spokojny bieg z przebieżkami — nogi uczą się szybszego kroku bez zmęczenia.',
+    tempo: 'Próg trzymany równo — to podnosi tempo, które utrzymasz długo.', quality: 'Odcinki progowe zrobione równo — świetna robota.', intervals: 'Interwały zrobione zgodnie z planem — szybkość rośnie.',
+    fartlek: 'Zabawa tempem zrobiona jak trzeba.', progression: 'Ładnie narastający bieg — mocna końcówka na zmęczonych nogach.', race: 'Sprawdzian pobiegnięty mądrze.', test: 'Sprawdzian pobiegnięty mądrze.' }[k] || 'Zgodnie z planem.';
+  const tip = weak ? weak.tip : praise;
+  return { ok: pct >= 70, pct, verdict, tip, parts, label: `${pct}% · ${verdict}` };
 }
+// zgodność wstecz
+export const compliance = scoreSession;
 
 // ── HARMONOGRAM ────────────────────────────────────────────────────────────
 // Każdy trening ma swój stały dzień (np. wt / czw / nd). Opuszczony trening przesuwa się
@@ -140,7 +225,8 @@ export function planSchedule(plan, acts, set, now = Date.now()) {
   // dopasowanie biegów: bieg z dnia D zalicza trening zaplanowany na D (albo dzień później),
   // a jeśli takiego nie ma — najstarszy zaległy, którego termin nadrobienia jeszcze trwa
   const startDay = dayStart(plan.start);
-  const usedRuns = new Set(Object.values(marks).map(m => m.runId).filter(Boolean));
+  const offPlan = new Set(plan.offPlan || []);
+  const usedRuns = new Set([...Object.values(marks).map(m => m.runId).filter(Boolean), ...offPlan]);
   const runs = acts.filter(a => isRun(a) && a.start >= startDay && !usedRuns.has(a.id)).sort((a, b) => a.start - b.start);
   for (const r of runs) {
     const D = dayStart(r.start);
@@ -157,7 +243,9 @@ export function planSchedule(plan, acts, set, now = Date.now()) {
   const done = list.filter(s => s.status === 'done').length;
   const closed = list.filter(s => ['done', 'skipped', 'missed'].includes(s.status)).length;
   const next = open[0] || null;
-  return { sessions: list, open, done, closed, total: list.length, next, week: next ? next.week : list[list.length - 1]?.week, finished: !next };
+  const matched = new Set(list.map(x => x.runId).filter(Boolean));
+  const unmatched = runs.filter(r => !matched.has(r.id)).map(r => r.id);
+  return { sessions: list, open, done, closed, total: list.length, next, unmatched, offPlan: [...offPlan], week: next ? next.week : list[list.length - 1]?.week, finished: !next };
 }
 export function newPlan(days, now = Date.now()) {
   return { goal: 'base', days: [...days].sort((a, b) => offsetOf(a) - offsetOf(b)), start: dayStart(now), marks: {}, moves: {}, updated: Date.now() };
@@ -339,3 +427,79 @@ export function changePlanDays(plan, acts, set, newDays, longDay, now = Date.now
   return { ...plan, days: sorted, sessions, marks, moves, longDay, meta: plan.meta ? { ...plan.meta, opts: { ...(plan.meta.opts || {}), days: sorted, longDay } } : plan.meta, updated: Date.now() };
 }
 export function mondayOfWeek(ts) { return mondayOf(ts); }
+
+// ── PRZYPISANIE BIEGU DO PLANU ──────────────────────────────────────────────
+// Czy aplikacja jest pewna, który to trening? Jeśli nie — pytamy po wgraniu.
+export function linkStatus(plan, acts, set, run, now = Date.now()) {
+  if (!plan || plan.ended || !isRun(run) || run.start < dayStart(plan.start)) return { inPlan: false };
+  const sch = planSchedule(plan, acts, set, now);
+  if ((plan.offPlan || []).includes(run.id)) return { inPlan: true, off: true, sch };
+  const ses = sch.sessions.find(x => x.runId === run.id) || null;
+  const D = dayStart(run.start);
+  const cands = linkCandidates(sch, run);
+  let sure = !!ses;
+  if (ses) {
+    const manual = !!(plan.marks || {})[ses.id]?.runId;
+    if (!manual) {
+      if (ses.kind !== 'race' && run.timer / 60 < ses.min * 0.5) sure = false;              // dużo krócej niż trening
+      if (ses.date !== D && cands.filter(c => c.id !== ses.id && c.status !== 'done').length) sure = false;   // poza dniem, a są inne kandydatury
+    }
+  }
+  return { inPlan: true, ses, sure, cands, sch };
+}
+// treningi, do których można przypisać bieg: niezrobione z ±7 dni (plus obecny), najbliższe dacie biegu
+export function linkCandidates(sch, run) {
+  const D = dayStart(run.start);
+  return sch.sessions.filter(x => (x.runId === run.id || x.status !== 'done' && x.status !== 'skipped') && Math.abs(x.date - D) <= 7 * DAY)
+    .sort((a, b) => Math.abs(a.date - D) - Math.abs(b.date - D) || a.date - b.date).slice(0, 5);
+}
+// zapisuje decyzję: sessionId albo 'off' (poza planem)
+export function linkRun(plan, runId, target, runStart) {
+  const marks = { ...(plan.marks || {}) };
+  for (const [k, m] of Object.entries(marks)) if (m.runId === runId) delete marks[k];
+  const off = (plan.offPlan || []).filter(x => x !== runId);
+  if (target === 'off') off.push(runId);
+  else marks[target] = { s: 'done', ts: runStart, runId };
+  return { ...plan, marks, offPlan: off, updated: Date.now() };
+}
+
+// ── REALIZACJA I SKUTECZNOŚĆ PLANU ─────────────────────────────────────────
+export function planProgress(plan, acts, set, now = Date.now()) {
+  const sch = planSchedule(plan, acts, set, now);
+  const closed = sch.sessions.filter(x => ['done', 'missed', 'skipped'].includes(x.status));
+  const scores = closed.map(x => x.status === 'done' ? (x.comp?.pct ?? 100) : 0);
+  const exec = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  const doneScores = closed.filter(x => x.status === 'done' && x.comp?.pct != null).map(x => x.comp.pct);
+  const quality = doneScores.length ? Math.round(doneScores.reduce((a, b) => a + b, 0) / doneScores.length) : null;
+  const missed = closed.filter(x => x.status !== 'done').length;
+  const start = dayStart(plan.start), weeksIn = Math.max(0, (now - start) / (7 * DAY));
+  // forma: VDOT na starcie planu (z generatora) i dziś
+  const G = GOALS[plan.goal] || {};
+  const formNow = currentForm(acts, now);
+  const vdStart = plan.meta?.vdNow ?? currentForm(acts, start)?.vdot ?? null;
+  const vdNow = formNow?.vdot ?? null;
+  const vdTarget = plan.meta?.vdTarget ?? null;
+  const dist = G.dist || 5000;
+  const form = vdStart && vdNow ? {
+    vdStart, vdNow, dist, distLabel: { 5000: '5 km', 10000: '10 km', 21097.5: 'półmaraton' }[dist],
+    predStart: timeForVdot(vdStart, dist), predNow: timeForVdot(vdNow, dist),
+    goal: plan.meta?.opts?.target || null,
+    progress: vdTarget && vdTarget > vdStart ? clamp01((vdNow - vdStart) / (vdTarget - vdStart)) : null,
+  } : null;
+  // tempo przy tym samym (łatwym) tętnie: 4 tyg. przed planem vs ostatnie 4 tyg.
+  const ref = easyHrMax(set);
+  const pBefore = paceAtHr(acts, ref, start - 28 * DAY, start), pNow = weeksIn >= 1 ? paceAtHr(acts, ref, now - 28 * DAY, now + 1) : null;
+  const pace = pBefore && pNow ? { ref, before: pBefore.pace, now: pNow.pace, diff: pNow.pace - pBefore.pace } : null;
+  // ocena skuteczności
+  let note;
+  if (weeksIn < 2) note = 'Na ocenę skuteczności planu za wcześnie — pierwsze efekty widać po 3–4 tygodniach.';
+  else {
+    const better = (pace && pace.diff <= -3) || (form && form.vdNow - form.vdStart >= 0.3);
+    const worse = (pace && pace.diff >= 5) && !(form && form.vdNow > form.vdStart);
+    if (better) note = `Plan działa: ${pace && pace.diff <= -3 ? `przy tętnie ${ref} biegasz o ${Math.round(-pace.diff)} s/km szybciej niż przed planem` : `forma wzrosła z ${form.vdStart.toFixed(1).replace('.', ',')} do ${form.vdNow.toFixed(1).replace('.', ',')}`}.`;
+    else if (worse) note = 'Tempo przy tym samym tętnie spadło — możliwe zmęczenie. Sprawdź sen i czy łatwe biegi są naprawdę łatwe.';
+    else if (weeksIn >= 4) note = `Forma stoi w miejscu od ${Math.floor(weeksIn)} tygodni${exec != null && exec < 75 ? ` — realizacja planu ${exec}% to za mało, żeby zobaczyć postęp` : ' — trzymaj łatwe biegi naprawdę spokojnie, efekt często przychodzi skokowo'}.`;
+    else note = 'Forma na razie bez zmian — to normalne na tym etapie planu.';
+  }
+  return { sch, exec, quality, missed, closed: closed.length, done: sch.done, total: sch.total, weeksIn, form, pace, note };
+}

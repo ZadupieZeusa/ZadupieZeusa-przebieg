@@ -65,7 +65,7 @@ Po wgraniu nowej wersji aplikacja zaproponuje jednorazowe przeliczenie treningó
 - **Cel:** „Kondycja i mniej brzucha”, 12 tygodni, 2–4 stałe dni w tygodniu (domyślnie wt · czw · nd).
 - **Tydzień:** łatwy bieg, akcent (przebieżki, interwały progowe, fartlek) i długi bieg od 40 do 80 minut. Co 4. tydzień jest lżejszy, a na koniec jest sprawdzian 5 km.
 - **Opuszczony trening:** przesuwa się tylko on. Można go nadrobić do dnia przed kolejnym treningiem z planu, a jeśli się nie uda, przepada. Reszta planu zostaje na swoich dniach.
-- **Odhaczanie:** wgrany bieg FIT odhacza trening sam i dostaje ocenę zgodności (tętno, czas). Ręcznie służą do tego przyciski „Zrobione bez zegarka”, „Jutro” i „Pomiń”.
+- **Odhaczanie:** przy aktywnym planie każdy wgrany bieg zalicza trening z planu. Gdy nie wiadomo który, aplikacja pyta (albo „Poza planem”). Ręcznie służą do tego przyciski „Zrobione bez zegarka”, „Jutro” i „Pomiń”.
 - **Gdzie żyje plan:** tylko w aplikacji, synchronizowany przez `baza.json` na Dysku, bez Kalendarza Google.
 
 ## Wersja 3
@@ -87,3 +87,10 @@ Po wgraniu aplikacja poprosi o jednorazowe przeliczenie treningów (silnik v3, b
 - **Data startu planu:** dziś, ten poniedziałek, najbliższy poniedziałek albo dowolna data. Przy starcie od poniedziałku minione treningi z tego tygodnia są zaległe, a bieg zrobiony w tym tygodniu zalicza najstarszy z nich.
 - **Bieg zrobiony przed terminem** ma etykietę „zrobiony dzień wcześniej”, a nie „nadrobiony”.
 - **„Zmień dni”:** historia zostaje, pozostałe treningi przechodzą na nowe dni. W bieżącym tygodniu trafiają tylko na dni, które jeszcze nie minęły, a jeśli dziś był już bieg, liczą się od jutra.
+
+### Ocena treningu i realizacja planu (13.11)
+- **Podsumowanie** na górze raportu każdego biegu: kilka zdań o tym, jak poszedł bieg, jak wypada na tle podobnych, kadencja i ile odpoczynku potrzebujesz. Dłuższa analiza jest niżej, w „Szczegółach”.
+- **Ocena wykonania 0–100%** dla biegu z planu (jak w Zepp): intensywność 40, czas lub dystans 30, struktura 20 (przebieżki, odcinki, ciągłość progu, równość tempa), termin 10. Do tego wskazówka, co poprawić następnym razem.
+- **Przypisanie biegu:** gdy pasują dwa treningi, bieg jest dużo krótszy niż plan albo zrobiony poza dniem, po imporcie pojawia się pytanie „Który to trening z planu?”. W raporcie przycisk „Zmień” pozwala to poprawić.
+- **Realizacja planu:** średnia ocen wszystkich minionych treningów, opuszczony liczy się jako 0%. Widać ją w raporcie i w zakładce Plan.
+- **Skuteczność planu:** prognoza na dystans celu od startu planu, procent drogi do celu i tempo przy tym samym tętnie przed planem i teraz. Gdy forma stoi 4 tygodnie, aplikacja to napisze.

@@ -121,7 +121,7 @@ export const TYPES = {
   race: { label: 'Bardzo mocny bieg', tone: 'hard' },
   other: { label: 'Aktywność', tone: 'easy' },
 };
-function countReps(a) {
+export function countReps(a) {
   const sp = (a.mins || []).slice(3).map(m => m[1]);
   if (sp.length < 8) return 0;
   const med = median(sp);
@@ -258,7 +258,27 @@ export function workoutReport(a, acts, s, opts = {}) {
   // co dalej
   const next = nextStep(a, acts, s, opts.now ?? a.start + DAY);
   const headline = `${T.label} · ${fmtKm(a.distance)} km w ${fmtDur(a.timer)}`;
-  return { type, label: T.label, tone: T.tone, headline, summary: TYPE_TEXT[type].split('. ')[0] + '.', paras, facts, next, load: Math.round(load), zones: zt, eff };
+  // ── podsumowanie: kilka zdań „po ludzku” na górę raportu ──
+  const ov = [];
+  if (isRun(a)) {
+    ov.push(`${T.label}: ${fmtKm(a.distance)} km w ${fmtDur(a.timer)}${a.pace ? `, średnio ${fmtPace(a.pace)}/km` : ''}${a.avgHr ? ` przy tętnie ${a.avgHr} bpm` : ''}.`);
+    if (zt) {
+      const tot = zt.reduce((x, y) => x + y, 0) || 1;
+      const easy = (zt[0] + zt[1] + zt[2]) / tot, hardM = Math.round((zt[4] + zt[5]) / 60);
+      if (T.tone === 'easy') ov.push(easy >= 0.8 ? `Naprawdę spokojnie — ${pct(easy)} czasu w strefach łatwych, tak buduje się wytrzymałość.` : easy >= 0.6 ? `Przeważnie spokojnie (${pct(easy)} czasu łatwo), ale tętno momentami uciekało powyżej ${zs[1].hi}.` : `Jak na spokojny bieg za mocno — tylko ${pct(easy)} czasu łatwo. Taki bieg męczy, a buduje mniej, niż mógłby.`);
+      else ov.push(hardM >= 5 ? `${hardM} min na progu i wyżej — solidny bodziec dla progu mleczanowego.` : `Mocniejszy bieg, ale głównie w strefie pośredniej (${zs[2].lo}–${zs[2].hi}) — ani spokój, ani akcent.`);
+    }
+    if (sim.length >= 2 && a.pace) {
+      const dp = a.pace - median(sim.map(x => x.pace)), sh = median(sim.filter(x => x.avgHr).map(x => x.avgHr)), dh = sh && a.avgHr ? a.avgHr - sh : 0;
+      if (dp < -5 && dh <= 1) ov.push(`Na tle podobnych biegów o ${Math.round(-dp)} s/km szybciej przy tym samym lub niższym tętnie — forma rośnie.`);
+      else if (dp > 5 && dh >= 1) ov.push(`Wolniej niż zwykle przy wyższym tętnie — słabszy dzień (zmęczenie, sen, pogoda).`);
+      else if (Math.abs(dp) <= 5 && dh <= -3) ov.push(`To samo tempo co zwykle, ale tętno niższe o ${Math.round(-dh)} — serce pracuje oszczędniej.`);
+    } else if (eff && eff.drift > 5) ov.push(`Tętno rosło pod koniec (dryf ${r1(eff.drift)}%) — zmęczenie albo za szybki start.`);
+    if (a.cadence && a.cadence < 160 && a.cadence > 120) ov.push(`Kadencja ${a.cadence} kroków/min — krótszy, szybszy krok (165–175) odciąży kolana i ścięgna.`);
+    const L = Math.round(load);
+    ov.push(L < 40 ? 'Lekkie obciążenie — jutro możesz normalnie trenować.' : L < 80 ? 'Umiarkowane obciążenie — regeneracja ok. 24 h.' : L < 130 ? 'Duże obciążenie — następny mocny trening najwcześniej za 2 dni.' : 'Bardzo duże obciążenie — 2–3 dni luźno albo wolne.');
+  }
+  return { type, label: T.label, tone: T.tone, headline, overview: ov, summary: ov[1] || TYPE_TEXT[type].split('. ')[0] + '.', paras, facts, next, load: Math.round(load), zones: zt, eff };
 }
 
 // rekomendacja kolejnego treningu: na podstawie typu ostatnich biegów, świeżości i przyrostu kilometrów

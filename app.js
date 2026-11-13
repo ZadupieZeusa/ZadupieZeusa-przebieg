@@ -401,6 +401,13 @@ async function importFiles(fileList) {
   m.close();
   renderAll();
   for (const a of added.slice(0, 15)) fetchWeather(a);
+  if (activePlan() && added.length <= 5) {
+    for (const a of added.filter(C.isRun).sort((x, y) => x.start - y.start)) {
+      const st = P.linkStatus(db.plan, acts(), S(), a);
+      if (st.inPlan && !st.off && !st.sure && st.cands.length) await askPlanLink(a);
+    }
+    renderAll();
+  }
   showImportResult(added, dup, bad, bodyAdded);
 }
 function addBodyEntries(entries) {
@@ -754,10 +761,11 @@ function renderReport() {
   const rep = A.workoutReport(a, acts(), s);
   const zs = A.zonesFor(s.lthr);
   let html = `<div class="card report"><div class="report-head">${typePill(a)}<b>Raport treningu</b><span class="muted">analiza z Twoich stref</span></div>`;
-  const ps = activePlan() ? P.planSchedule(db.plan, acts(), s).sessions.find(x => x.runId === a.id) : null;
-  if (ps) html += `<div class="plan-line ${ps.comp.ok ? 'ok' : 'warn'}">${icon('plan')}<span><b>Plan, tydzień ${ps.week}:</b> ${esc(P.sessionInfo(ps, s, db.plan).title)} — ${esc(ps.comp.label)}</span></div>`;
+  if (rep.overview?.length) html += `<div class="overview"><b>Podsumowanie</b>${rep.overview.map(t => `<p>${esc(t)}</p>`).join('')}</div>`;
   if (rep.facts.length) html += `<div class="facts">${rep.facts.map(f => `<span class="pill gold">${esc(f)}</span>`).join('')}</div>`;
-  html += rep.paras.map(p => `<p>${esc(p)}</p>`).join('');
+  const planHtml = planCardHtml(a, s);
+  if (planHtml) html += planHtml;
+  html += `<div class="rep-sub">Szczegóły</div>` + rep.paras.map(p => `<p>${esc(p)}</p>`).join('');
   html += `<div class="nextbox"><b>Co dalej:</b> ${esc(rep.next)}</div></div>`;
   if (rep.zones) {
     const tot = rep.zones.reduce((x, y) => x + y, 0) || 1;
@@ -770,6 +778,53 @@ function renderReport() {
     html += `<div class="weather"><span class="pill">🌡 ${Math.round(w.t)}°C${w.feels != null ? ` (odcz. ${Math.round(w.feels)}°)` : ''}</span><span class="pill">💨 ${Math.round(w.wind)} km/h</span>${w.rh != null ? `<span class="pill">💧 ${Math.round(w.rh)}%</span>` : ''}${w.prec ? `<span class="pill">🌧 ${dec1(w.prec)} mm</span>` : ''}</div>`;
   }
   slot.innerHTML = html;
+  slot.querySelectorAll('[data-link]').forEach(b => b.onclick = () => askPlanLink(a).then(() => { renderReport(); }));
+}
+// ── karta „Plan vs wykonanie” ──
+function ringSvg(p, size = 64) {
+  const r = size / 2 - 6, c = 2 * Math.PI * r, col = p >= 90 ? 'var(--accent)' : p >= 75 ? '#86efac' : p >= 55 ? 'var(--warn)' : 'var(--danger)';
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" stroke="#ffffff14" stroke-width="7" fill="none"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" stroke="${col}" stroke-width="7" fill="none" stroke-linecap="round" stroke-dasharray="${c * p / 100} ${c}" transform="rotate(-90 ${size / 2} ${size / 2})"/><text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="${size * 0.26}" font-weight="800">${p}%</text></svg>`;
+}
+function planCardHtml(a, s) {
+  if (!activePlan() || !C.isRun(a)) return '';
+  const st = P.linkStatus(db.plan, acts(), s, a);
+  if (!st.inPlan) return '';
+  if (st.off || !st.ses) return `<div class="plan-card off"><div class="pc-head">${icon('plan')}<div style="flex:1"><div class="pc-k">${st.off ? 'Bieg poza planem' : 'Bieg nieprzypisany do planu'}</div><div class="muted small">${st.off ? 'Nie liczy się do oceny planu.' : 'Nie pasuje do żadnego treningu w terminie.'}</div></div><button class="pc-chg" data-link>Przypisz</button></div></div>`;
+  const ps = st.ses, c = ps.comp || {}, info = P.sessionInfo(ps, s, db.plan);
+  const idx = st.sch.sessions.indexOf(ps) + 1, weeks = P.planWeeks(db.plan);
+  let html = `<div class="plan-card"><div class="pc-head">${c.pct != null ? ringSvg(c.pct) : ''}<div style="flex:1;min-width:0"><div class="pc-k">Trening z planu · tydzień ${ps.week}/${weeks} · ${idx} z ${st.sch.total}</div><b class="pc-t">${esc(info.title)}</b>${c.verdict ? `<div class="pc-v ${c.pct >= 75 ? 'ok' : c.pct >= 55 ? 'mid' : 'bad'}">${esc(c.verdict)}</div>` : '<div class="muted small">oznaczony ręcznie</div>'}</div><button class="pc-chg" data-link title="Zmień, który to trening">Zmień</button></div>`;
+  if (c.parts?.length) {
+    html += `<div class="pc-parts">${c.parts.map(p => `<div class="pc-part"><div class="pc-pt"><b>${esc(p.label)}</b><span class="pc-sc ${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}">${Math.round(p.score * p.share)}/${p.share}</span></div><div class="pc-bar"><i class="${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}" style="width:${Math.round(p.score * 100)}%"></i></div><div class="pc-pd"><span>plan: ${esc(p.plan)}</span><span>zrobione: <b>${esc(p.done)}</b></span></div></div>`).join('')}</div>`;
+    html += `<div class="pc-tip">${esc(c.tip)}</div>`;
+  }
+  const pr = P.planProgress(db.plan, acts(), s);
+  const c1 = v => v.toFixed(1).replace('.', ',');
+  html += `<div class="pc-plan"><div class="pc-row"><span>Realizacja planu</span><b>${pr.exec != null ? pr.exec + '%' : '–'}</b></div><div class="progress"><i style="width:${pr.exec || 0}%"></i></div>
+    <div class="muted small">${pr.done} z ${pr.total} treningów zrobione${pr.missed ? ` · opuszczone ${pr.missed}` : ''}${pr.quality != null ? ` · średnia ocena wykonania ${pr.quality}%` : ''}</div>`;
+  if (pr.form) {
+    const f = pr.form;
+    html += `<div class="pc-row" style="margin-top:10px"><span>Prognoza ${esc(f.distLabel || '5 km')}</span><b>${C.fmtDur(f.predStart)} → ${C.fmtDur(f.predNow)}</b></div>`;
+    if (f.goal) html += `<div class="muted small">cel ${C.fmtDur(f.goal)} · forma ${c1(f.vdStart)} → ${c1(f.vdNow)}${f.progress != null ? ` · ${Math.round(f.progress * 100)}% drogi do celu` : ''}</div>${f.progress != null ? `<div class="progress gold"><i style="width:${Math.round(f.progress * 100)}%"></i></div>` : ''}`;
+    else html += `<div class="muted small">forma (VDOT) ${c1(f.vdStart)} → ${c1(f.vdNow)}</div>`;
+  }
+  if (pr.pace) html += `<div class="pc-row" style="margin-top:10px"><span>Tempo przy tętnie ${pr.pace.ref}</span><b>${C.fmtPace(pr.pace.before)} → ${C.fmtPace(pr.pace.now)}/km</b></div>`;
+  html += `<p class="pc-note">${esc(pr.note)}</p></div></div>`;
+  return html;
+}
+// pytanie „który to trening?”
+function askPlanLink(run) {
+  return new Promise(resolve => {
+    const s = S(), st = P.linkStatus(db.plan, acts(), s, run);
+    if (!st.inPlan) { resolve(); return; }
+    const cands = st.cands;
+    const m = modal(`<h3>Który to trening z planu?</h3><p class="muted">Bieg ${esc(fmtDateShort(run.start))}, ${C.fmtKm(run.distance)} km w ${C.fmtDur(run.timer)}.</p>
+      <div class="link-opts">${cands.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<button class="link-opt ${st.ses && st.ses.id === x.id ? 'cur' : ''}" data-t="${x.id}"><b>${esc(i.title)}</b><span>${esc(P.DAY_NAMES[new Date(x.date).getDay()])}, ${esc(fmtDateShort(x.date))} · tydz. ${x.week}${x.status === 'overdue' ? ' · zaległy' : x.status === 'missed' ? ' · przepadł' : x.status === 'done' ? ' · obecnie' : ''}</span></button>`; }).join('')}
+      <button class="link-opt off ${st.off ? 'cur' : ''}" data-t="off"><b>Poza planem</b><span>nie liczy się do oceny planu</span></button></div>`, { dismiss: false });
+    m.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+      db.plan = P.linkRun(db.plan, run.id, b.dataset.t, run.start); changed();
+      m.close(); toast(b.dataset.t === 'off' ? 'Oznaczono jako bieg poza planem' : '✓ Przypisano do planu'); resolve();
+    });
+  });
 }
 function renderNote() {
   const a = cur, slot = $('#note-slot'); if (!a || !slot) return;
@@ -1324,16 +1379,18 @@ function renderPlan() {
   const s = S();
   const sch = P.planSchedule(db.plan, acts(), s);
   const pctDone = Math.round(sch.closed / sch.total * 100);
+  const prog = P.planProgress(db.plan, acts(), s);
   const missedN = sch.sessions.filter(x => x.status === 'missed').length;
   let html = `<div class="card pad"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"><b style="font-size:16px">${esc(P.planLabel(db.plan))}</b><span class="muted small">${db.plan.days.map(d => P.DAY_SHORT[d]).join(' · ')}</span></div>
     <div class="progress" style="height:8px"><i style="width:${pctDone}%"></i></div>
-    <div class="muted small" style="margin-top:8px">Zrobione ${sch.done} z ${sch.total}${missedN ? ` · przepadło ${missedN}` : ''} · tydzień ${Math.min(sch.week, P.planWeeks(db.plan))} z ${P.planWeeks(db.plan)}</div>${planMetaHtml(db.plan)}</div>
+    <div class="muted small" style="margin-top:8px">Zrobione ${sch.done} z ${sch.total}${missedN ? ` · przepadło ${missedN}` : ''} · tydzień ${Math.min(sch.week, P.planWeeks(db.plan))} z ${P.planWeeks(db.plan)}</div>
+    ${prog.exec != null ? `<div class="plan-exec">${ringSvg(prog.exec, 56)}<div><b>Realizacja planu</b><div class="muted small">${prog.quality != null ? `średnia ocena wykonania ${prog.quality}%` : ''}${prog.missed ? ` · opuszczone ${prog.missed} (liczą się jako 0%)` : ''}</div><div class="small" style="margin-top:4px;line-height:1.45">${esc(prog.note)}</div></div></div>` : ''}${planMetaHtml(db.plan)}</div>
     <div class="sec">Najbliższy trening</div>${todayCardHtml(false)}`;
   const upcoming = sch.open.slice(1, 8);
   if (upcoming.length) html += `<div class="sec">Kolejne</div><div class="card">${upcoming.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<details class="pl-row"><summary><span class="pl-date">${esc(relDay(x.date))}</span><span class="pill ${i.tone}"><i></i>${esc(i.short)}</span><span class="pl-t">${esc(i.title)}</span></summary><ul class="steps">${i.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ul></details>`; }).join('')}</div>`;
   const done = sch.sessions.filter(x => ['done', 'skipped', 'missed'].includes(x.status)).sort((a, b) => (b.at || b.planned) - (a.at || a.planned));
-  if (done.length) html += `<div class="sec">Zrobione</div><div class="card">${done.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<div class="pl-row done" ${x.runId ? `data-id="${x.runId}"` : ''}><span class="pl-date">${fmtDateShort(x.at || x.planned)}</span><span class="pl-t">${esc(i.title)}<small>${x.status === 'skipped' ? 'pominięty' : x.status === 'missed' ? 'przepadł — nie nadrobiony na czas' : esc((x.comp ? x.comp.label : 'oznaczony ręcznie') + (x.runId && P.dayStart(x.at) < x.planned ? ` · zrobiony dzień wcześniej (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : x.runId && P.dayStart(x.at) > x.planned ? ` · nadrobiony (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : ''))}</small></span><span class="pl-st ${x.status !== 'done' ? 'skip' : x.comp && !x.comp.ok ? 'warn' : 'ok'}">${x.status !== 'done' ? '–' : x.comp && !x.comp.ok ? '!' : '✓'}</span></div>`; }).join('')}</div>`;
-  html += `<div class="sec">Jak działa plan</div><div class="card pad"><p class="muted" style="font-size:13.5px;line-height:1.6">Każdy trening ma swój stały dzień. Jeśli go opuścisz, przesuwa się <b>tylko ten jeden</b> — pokaże się jako <b>zaległy</b> i możesz go nadrobić do dnia przed kolejnym treningiem (np. czwartek → piątek lub sobota). Reszta planu zostaje na swoich dniach. Bieg z wgranego pliku FIT odhacza się sam i dostaje ocenę zgodności z planem; przycisk „Jutro” przekłada tylko bieżący trening.</p>
+  if (done.length) html += `<div class="sec">Zrobione</div><div class="card">${done.map(x => { const i = P.sessionInfo(x, s, db.plan); return `<div class="pl-row done" ${x.runId ? `data-id="${x.runId}"` : ''}><span class="pl-date">${fmtDateShort(x.at || x.planned)}</span><span class="pl-t">${esc(i.title)}<small>${x.status === 'skipped' ? 'pominięty' : x.status === 'missed' ? 'przepadł — nie nadrobiony na czas' : esc((x.comp ? x.comp.label : 'oznaczony ręcznie') + (x.runId && P.dayStart(x.at) < x.planned ? ` · zrobiony dzień wcześniej (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : x.runId && P.dayStart(x.at) > x.planned ? ` · nadrobiony (plan: ${P.DAY_SHORT[new Date(x.planned).getDay()]})` : ''))}</small></span><span class="pl-st ${x.status !== 'done' ? 'skip' : x.comp && !x.comp.ok ? 'warn' : 'ok'}">${x.status !== 'done' ? '–' : x.comp?.pct != null ? x.comp.pct : '✓'}</span></div>`; }).join('')}</div>`;
+  html += `<div class="sec">Jak działa plan</div><div class="card pad"><p class="muted" style="font-size:13.5px;line-height:1.6">Każdy trening ma swój stały dzień. Jeśli go opuścisz, przesuwa się <b>tylko ten jeden</b> — pokaże się jako <b>zaległy</b> i możesz go nadrobić do dnia przed kolejnym treningiem (np. czwartek → piątek lub sobota). Reszta planu zostaje na swoich dniach. Każdy wgrany bieg zalicza trening z planu i dostaje ocenę wykonania 0–100% (intensywność, czas, struktura, termin) — gdy nie wiadomo, który to trening, aplikacja zapyta; przycisk „Jutro” przekłada tylko bieżący trening.</p>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" id="pl-chdays">Zmień dni</button><button class="btn" id="pl-days">Dopasuj plan</button><button class="btn danger" id="pl-del">Zakończ plan</button></div></div>`;
   el.innerHTML = html;
   bindTodayCard(el);
