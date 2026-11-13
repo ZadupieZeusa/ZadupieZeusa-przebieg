@@ -1,7 +1,8 @@
 // Przebieg — interfejs, synchronizacja z Dyskiem Google, import, widoki.
-import * as C from './core.js?v=20261113c';
-import * as A from './analysis.js?v=20261113c';
-import * as P from './plan.js?v=20261113c';
+const APP_VER = '20261113d';
+import * as C from './core.js?v=20261113d';
+import * as A from './analysis.js?v=20261113d';
+import * as P from './plan.js?v=20261113d';
 
 // ══ KONFIGURACJA ════════════════════════════════════════════════════════════
 // Ten sam klient OAuth co FotoPlaner (autoryzowany adres: zadupiezeusa.github.io).
@@ -327,7 +328,7 @@ async function sync({ quiet = true } = {}) {
 
 // ══ IMPORT ══════════════════════════════════════════════════════════════════
 let vendor;
-const getVendor = async () => vendor ||= await import('./vendor.js?v=20261113c');
+const getVendor = async () => vendor ||= await import('./vendor.js?v=20261113d');
 async function expandFiles(fileList) {
   const V = await getVendor();
   const out = [];
@@ -795,7 +796,8 @@ function planCardHtml(a, s) {
   let html = `<div class="plan-card"><div class="pc-head">${c.pct != null ? ringSvg(c.pct) : ''}<div style="flex:1;min-width:0"><div class="pc-k">Trening z planu · tydzień ${ps.week}/${weeks} · ${idx} z ${st.sch.total}</div><b class="pc-t">${esc(info.title)}</b>${c.verdict ? `<div class="pc-v ${c.pct >= 75 ? 'ok' : c.pct >= 55 ? 'mid' : 'bad'}">${esc(c.verdict)}</div>` : '<div class="muted small">oznaczony ręcznie</div>'}</div><button class="pc-chg" data-link title="Zmień, który to trening">Zmień</button></div>`;
   if (c.parts?.length) {
     html += `<div class="pc-parts">${c.parts.map(p => `<div class="pc-part"><div class="pc-pt"><b>${esc(p.label)}</b><span class="pc-sc ${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}">${Math.round(p.score * p.share)}/${p.share}</span></div><div class="pc-bar"><i class="${p.score >= 0.9 ? 'ok' : p.score >= 0.6 ? 'mid' : 'bad'}" style="width:${Math.round(p.score * 100)}%"></i></div><div class="pc-pd"><span>plan: ${esc(p.plan)}</span><span>zrobione: <b>${esc(p.done)}</b></span></div></div>`).join('')}</div>`;
-    const db_ = curStreams && cur === a ? P.sessionDebrief(ps, a, curStreams, s, db.plan) : null;
+    let db_ = null;
+    try { db_ = curStreams && cur === a ? P.sessionDebrief(ps, a, curStreams, s, db.plan) : null; } catch (e) { console.error('[Przebieg] omówienie:', e); }
     if (db_ && (db_.issues.length || db_.good.length)) {
       html += `<div class="debrief">`;
       if (db_.good.length) html += `<p class="db-good">${db_.good.map(esc).join(' ')}</p>`;
@@ -1752,7 +1754,7 @@ function driveMenu(anchor) {
   if (!token && !localStorage.getItem(LS('connected'))) { connect(); return; }
   $('.drive-menu')?.remove();
   const mnu = document.createElement('div'); mnu.className = 'drive-menu';
-  mnu.innerHTML = `<button data-a="sync">🔄 Synchronizuj teraz</button><button data-a="recompute">♻ Przelicz wszystkie treningi</button><button data-a="export">⬇ Pobierz bazę (JSON)</button><button data-a="status">ℹ Status synchronizacji</button><hr><button data-a="disconnect" style="color:var(--danger)">✕ Odłącz konto Google</button>`;
+  mnu.innerHTML = `<button data-a="sync">🔄 Synchronizuj teraz</button><button data-a="recompute">♻ Przelicz wszystkie treningi</button><button data-a="export">⬇ Pobierz bazę (JSON)</button><button data-a="status">ℹ Status synchronizacji</button><hr><button data-a="disconnect" style="color:var(--danger)">✕ Odłącz konto Google</button><div class="muted small" style="padding:6px 12px">wersja ${APP_VER}</div>`;
   document.body.appendChild(mnu);
   const r = anchor.getBoundingClientRect();
   const left = Math.min(innerWidth - mnu.offsetWidth - 10, Math.max(10, r.right - mnu.offsetWidth));

@@ -2,8 +2,8 @@
 // Plan to kolejka treningów w ustalonej kolejności. Daty nie są zapisane na sztywno:
 // liczymy je za każdym razem od ostatniego wykonanego treningu, więc opuszczony dzień
 // nigdy nie przepada — trening przechodzi na najbliższy możliwy dzień, a reszta planu za nim.
-import { isRun, fmtDur, fmtPace, fmtKm, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js?v=20261113c';
-import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js?v=20261113c';
+import { isRun, fmtDur, fmtPace, fmtKm, vdot as vdotOf, timeForVdot, currentForm, weekStart } from './core.js?v=20261113d';
+import { zonesFor, zoneTimes, TYPES, intensitySplit, paceAtHr, easyHrMax, countReps, efficiency } from './analysis.js?v=20261113d';
 
 const DAY = 864e5;
 export const DAY_NAMES = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];

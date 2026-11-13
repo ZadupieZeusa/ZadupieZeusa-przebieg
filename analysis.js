@@ -1,6 +1,6 @@
 // Przebieg — analizator: strefy, obciążenie, raporty treningów i kondycji, skład ciała.
 // Czyste funkcje bez DOM. Teksty po polsku, liczone wyłącznie z danych użytkownika.
-import { isRun, fmtPace, fmtDur, fmtKm, vdot, BEST_DISTANCES, newRecordsFor, currentForm, weekStart } from './core.js?v=20261113c';
+import { isRun, fmtPace, fmtDur, fmtKm, vdot, BEST_DISTANCES, newRecordsFor, currentForm, weekStart } from './core.js?v=20261113d';
 
 export const DEFAULT_SETTINGS = { lthr: 164, thrPace: 416, restHr: 60, maxHr: 187, height: null };
 const DAY = 864e5;
@@ -499,7 +499,7 @@ export function annotateTypes(acts, s) {
 }
 
 // ══ WERSJA 3 ════════════════════════════════════════════════════════════════
-import { isStrength, haversine, recordProgression, weekStreak } from './core.js?v=20261113c';
+import { isStrength, haversine, recordProgression, weekStreak } from './core.js?v=20261113d';
 
 // ── AUTOMATYCZNY PRÓG ──────────────────────────────────────────────────────
 // Najmocniejsze równe 20 minut biegu (bez rozgrzewki, bez postojów): średnie tętno ≈ próg
